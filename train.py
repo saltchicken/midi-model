@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from lightning import Trainer
 from lightning.fabric.utilities import rank_zero_only
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback # ‼️ Added Callback
 from lightning.pytorch.loggers import TensorBoardLogger
 from peft import LoraConfig, TaskType
 from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file
@@ -102,6 +102,57 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
+
+# ‼️ Added Custom Callback to save best LoRA
+class SaveBestPeftCallback(Callback):
+    def __init__(self, monitor="val/loss", mode="min"):
+        super().__init__()
+        self.monitor = monitor
+        self.mode = mode
+        self.best_score = float('inf') if mode == "min" else float('-inf')
+
+    def on_validation_end(self, trainer, pl_module):
+        logs = trainer.callback_metrics
+        if self.monitor not in logs:
+            return
+        
+        score = logs[self.monitor]
+        if isinstance(score, torch.Tensor):
+            score = score.item()
+            
+        is_best = False
+        if self.mode == "min":
+            if score < self.best_score:
+                is_best = True
+        else:
+            if score > self.best_score:
+                is_best = True
+
+        if is_best:
+            self.best_score = score
+            # Only run on global rank 0 to avoid race conditions/multiple writes
+            if trainer.is_global_zero:
+                # Check if PEFT config exists (meaning LoRA is active)
+                # pl_module might have 'peft_config' attribute if it's a PeftModel or wraps one
+                if hasattr(pl_module, "peft_config") and pl_module.peft_config:
+                    
+                    # Determine save directory
+                    if len(trainer.loggers) > 0 and trainer.loggers[0].save_dir:
+                         save_dir = trainer.loggers[0].save_dir
+                         name = trainer.loggers[0].name
+                         version = trainer.loggers[0].version
+                         version = version if isinstance(version, str) else f"version_{version}"
+                         save_dir = os.path.join(save_dir, str(name), version)
+                    else:
+                         save_dir = trainer.default_root_dir
+                    
+                    best_path = os.path.join(save_dir, "best_lora")
+                    print(f"‼️ Best model found (val/loss: {score:.4f}). Saving LoRA to {best_path}")
+                    
+                    try:
+                        pl_module.save_peft(best_path)
+                    except Exception as e:
+                        print(f"Error saving best LoRA: {e}")
 
 class TrainMIDIModel(MIDIModel, pl.LightningModule):
     def __init__(self, config: MIDIModelConfig,
@@ -239,6 +290,7 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             os.makedirs(save_dir, exist_ok=True)
         adapter_config.save_pretrained(save_dir)
         adapter_state_dict = self.get_adapter_state_dict(adapter_name)
+        # ‼️ Explicitly save as .safetensors
         safe_save_file(adapter_state_dict,
                        os.path.join(save_dir, "adapter_model.safetensors"),
                        metadata={"format": "pt"})
@@ -531,6 +583,10 @@ if __name__ == '__main__':
         filename="epoch={epoch},loss={val/loss:.4f}",
     )
     callbacks = [checkpoint_callback]
+    
+    # ‼️ Add the new callback
+    save_best_peft_callback = SaveBestPeftCallback(monitor="val/loss", mode="min")
+    callbacks.append(save_best_peft_callback)
 
     val_check_interval = opt.val_step or None
     if val_check_interval is not None:
