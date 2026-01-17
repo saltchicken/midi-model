@@ -6,3 +6,4 @@ peft
 transformers
 lightning
 tqdm
+tensorboard
