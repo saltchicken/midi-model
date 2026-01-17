@@ -9,7 +9,7 @@ import tqdm
 from peft import PeftConfig, LoraModel, load_peft_weights, set_peft_model_state_dict
 from transformers import LlamaModel, LlamaConfig, DynamicCache, PretrainedConfig, PreTrainedModel
 
-from midi_tokenizer import MIDITokenizerV1, MIDITokenizerV2, MIDITokenizer
+from midi_tokenizer import MIDITokenizerV2, MIDITokenizer
 
 config_name_list = ["tv1-medium", "tv2-medium", "tv2o-medium", "tv2-large", "tv2o-large"]
 

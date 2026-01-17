@@ -467,6 +467,34 @@ if __name__ == '__main__':
         collate_fn=val_dataset.collate_fn
     )
     print(f"train: {len(train_dataset)}  val: {len(val_dataset)}")
+
+
+    devices_count = opt.devices
+    if devices_count == -1:
+        if opt.accelerator == "cpu":
+            devices_count = 1
+        elif opt.accelerator == "gpu" or opt.accelerator == "auto":
+            devices_count = torch.cuda.device_count() if torch.cuda.is_available() else 1
+        else:
+            devices_count = 1
+
+    # Avoid division by zero
+    devices_count = max(1, devices_count)
+
+    # Effective batch size = batch_per_gpu * gpus * nodes * gradient_accumulation
+    effective_batch_size = opt.batch_size_train * devices_count * opt.nodes * opt.acc_grad
+    steps_per_epoch = len(train_dataset) / effective_batch_size
+
+    if steps_per_epoch > 0:
+        total_epochs = opt.max_step / steps_per_epoch
+        print(f"--- Training Duration Estimate ---")
+        print(f"  Effective Batch Size: {effective_batch_size}")
+        print(f"  Steps per Epoch:      {steps_per_epoch:.2f}")
+        print(f"  Max Steps:            {opt.max_step}")
+        print(f"  Estimated Epochs:     {total_epochs:.2f}")
+        print(f"----------------------------------")
+
+
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     torch.backends.cuda.enable_flash_sdp(True)
     model = TrainMIDIModel(config, lr=opt.lr, weight_decay=opt.weight_decay,
