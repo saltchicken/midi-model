@@ -1,5 +1,6 @@
 import argparse
 import os
+import random # ‼️ Added random for global seeding
 from datetime import datetime
 import numpy as np
 import torch
@@ -156,7 +157,7 @@ def main():
     parser.add_argument("--time_sig", type=str, default="auto", help="Time signature (e.g. 4/4)")
     
     # Gen Options
-    parser.add_argument("--seed", type=int, default=None, help="Random seed")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed") # ‼️ This allows choosing the seed
     parser.add_argument("--temp", type=float, default=1.0, help="Temperature")
     parser.add_argument("--top_p", type=float, default=0.98, help="Top P")
     parser.add_argument("--top_k", type=int, default=20, help="Top K")
@@ -212,6 +213,14 @@ def main():
     # 2. Prepare Prompt
     seed = args.seed if args.seed is not None else np.random.randint(0, MAX_SEED)
     print(f"Seed: {seed}")
+    
+    # ‼️ Set global seeds for reproducibility across libraries (random, numpy, torch)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        
     generator = torch.Generator(device).manual_seed(seed)
     
     mid_np = None
