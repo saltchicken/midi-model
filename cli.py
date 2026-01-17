@@ -124,7 +124,7 @@ def generate(model, tokenizer, prompt=None, batch_size=1, max_len=512, temp=1.0,
             
             if next_token_seq.shape[1] < max_token_seq:
                 next_token_seq = F.pad(next_token_seq, (0, max_token_seq - next_token_seq.shape[1]),
-                                     "constant", value=tokenizer.pad_id)
+                                       "constant", value=tokenizer.pad_id)
             
             next_token_seq = next_token_seq.unsqueeze(1)
             input_tensor = torch.cat([input_tensor, next_token_seq], dim=1)
@@ -142,7 +142,7 @@ def main():
 
     parser.add_argument("--model_path", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name (e.g. tv2o-medium) or path to config.json")
-    parser.add_argument("--lora_path", type=str, default=None, help="Path to LoRA adapter folder or huggingface id")
+    parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter folder or huggingface id")
     parser.add_argument("--output", type=str, default="output.mid", help="Output MIDI filename")
     parser.add_argument("--num_events", type=int, default=512, help="Max MIDI events to generate")
     parser.add_argument("--batch_size", type=int, default=1, help="Number of files to generate")
@@ -195,9 +195,16 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
 
-    if args.lora_path:
-        print(f"Loading and merging LoRA from {args.lora_path}...")
-        model = model.load_merge_lora(args.lora_path)
+    if args.lora:
+        lora_path = args.lora
+
+        if not os.path.exists(lora_path):
+            candidate = os.path.join("models", "lora", lora_path)
+            if os.path.exists(candidate):
+                lora_path = candidate
+        
+        print(f"Loading and merging LoRA from {lora_path}...")
+        model = model.load_merge_lora(lora_path)
 
     model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 
@@ -285,8 +292,8 @@ def main():
     os.makedirs("output", exist_ok=True)
 
 
-    if args.lora_path:
-        lora_name = os.path.basename(args.lora_path)
+    if args.lora:
+        lora_name = os.path.basename(args.lora)
         # Clean extension if provided as path
         if lora_name.endswith('.safetensors') or lora_name.endswith('.pt') or lora_name.endswith('.ckpt'):
              lora_name = os.path.splitext(lora_name)[0]
