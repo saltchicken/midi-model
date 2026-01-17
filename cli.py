@@ -159,8 +159,6 @@ def main():
     parser.add_argument("--temp", type=float, default=1.0, help="Temperature")
     parser.add_argument("--top_p", type=float, default=0.98, help="Top P")
     parser.add_argument("--top_k", type=int, default=20, help="Top K")
-    parser.add_argument("--lora-layer", type=int, default=None, help="LoRA Layer") # ‼️
-    parser.add_argument("--lora-alpha", type=float, default=None, help="LoRA Alpha") # ‼️
     
     args = parser.parse_args()
 
@@ -198,7 +196,7 @@ def main():
 
     if args.lora_path:
         print(f"Loading and merging LoRA from {args.lora_path}...")
-        model = model.load_merge_lora(args.lora_path, layer=args.lora_layer, alpha=args.lora_alpha) # ‼️
+        model = model.load_merge_lora(args.lora_path)
 
     model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 
