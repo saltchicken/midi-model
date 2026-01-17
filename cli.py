@@ -198,10 +198,11 @@ def main():
     if args.lora:
         lora_path = args.lora
 
-        if not os.path.exists(lora_path):
-            candidate = os.path.join("models", "lora", lora_path)
-            if os.path.exists(candidate):
-                lora_path = candidate
+        if not os.path.exists(args.lora):
+            potential_path = os.path.join("models", "loras", args.lora)
+            if os.path.exists(potential_path):
+                print(f"Found LoRA at {potential_path}")
+                lora_path = potential_path
         
         print(f"Loading and merging LoRA from {lora_path}...")
         model = model.load_merge_lora(lora_path)
