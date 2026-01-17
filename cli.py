@@ -1,6 +1,6 @@
 import argparse
 import os
-from datetime import datetime # ‼️ Added for timestamping
+from datetime import datetime
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -281,10 +281,10 @@ def main():
 
     # 4. Save Output
 
-    # ‼️ Create output directory
+
     os.makedirs("output", exist_ok=True)
 
-    # ‼️ Determine naming components (LoRA name and timestamp)
+
     if args.lora_path:
         lora_name = os.path.basename(args.lora_path)
         # Clean extension if provided as path
@@ -293,7 +293,7 @@ def main():
     else:
         lora_name = "base_model"
         
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # ‼️ Get current timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     for i in range(args.batch_size):
         tokens = output_tokens[i]
@@ -308,7 +308,7 @@ def main():
                 if event:
                     print(event)
 
-        # ‼️ Construct filename with output folder, lora name, timestamp, and batch index
+
         fname = f"output/{lora_name}_{timestamp}_{i}.mid"
             
         with open(fname, 'wb') as f:
