@@ -2,7 +2,6 @@ import argparse
 import os
 import random
 from pathlib import Path
-from typing import Union
 
 import lightning as pl
 import numpy as np
@@ -30,7 +29,7 @@ def file_ext(fname):
 
 
 class MidiDataset(Dataset):
-    def __init__(self, midi_list, tokenizer: Union[MIDITokenizerV2], max_len=2048, min_file_size=3000,
+    def __init__(self, midi_list, tokenizer: MIDITokenizerV2, max_len=2048, min_file_size=3000,
                  max_file_size=384000,
                  aug=True, check_quality=False, rand_start=True):
 
