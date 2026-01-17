@@ -12,7 +12,7 @@ from lightning import Trainer
 from lightning.fabric.utilities import rank_zero_only
 from lightning.pytorch.callbacks import ModelCheckpoint
 from peft import LoraConfig, TaskType
-from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file # ‼️ Added load_file import
+from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file
 from torch import optim
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import Dataset, DataLoader
@@ -431,10 +431,10 @@ if __name__ == '__main__':
                            sample_seq=opt.sample_seq, gen_example_interval=opt.gen_example_interval,
                            example_batch=opt.batch_size_gen_example)
     if opt.ckpt:
-        if opt.ckpt.endswith(".safetensors"): # ‼️ Added safetensors support logic
+        if opt.ckpt.endswith(".safetensors"):
             state_dict = safe_load_file(opt.ckpt)
         else:
-            # ‼️ Added weights_only=False to fix PyTorch 2.6+ unpickling error
+
             ckpt = torch.load(opt.ckpt, map_location="cpu", weights_only=False)
             state_dict = ckpt.get("state_dict", ckpt)
         model.load_state_dict(state_dict, strict=False)
@@ -462,7 +462,7 @@ if __name__ == '__main__':
     )
     callbacks = [checkpoint_callback]
 
-    val_check_interval = opt.val_step or None # ‼️ Added logic to handle small datasets
+    val_check_interval = opt.val_step or None
     if val_check_interval is not None:
         val_check_interval = min(val_check_interval, len(train_dataloader))
 
@@ -475,7 +475,7 @@ if __name__ == '__main__':
         num_nodes=opt.nodes,
         max_steps=opt.max_step,
         benchmark=not opt.disable_benchmark,
-        val_check_interval=val_check_interval, # ‼️ Updated to use safe interval
+        val_check_interval=val_check_interval,
         log_every_n_steps=1,
         strategy="auto",
         callbacks=callbacks,

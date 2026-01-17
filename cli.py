@@ -6,12 +6,12 @@ import torch.nn.functional as F
 import tqdm
 from safetensors.torch import load_file as safe_load_file
 
-# ‼️ Local imports from your directory structure
+
 import MIDI
 from midi_model import MIDIModel, MIDIModelConfig
 from midi_tokenizer import MIDITokenizer
 
-# ‼️ Standard mappings copied from app.py to support instrument names
+
 number2drum_kits = {-1: "None", 0: "Standard", 8: "Room", 16: "Power", 24: "Electric", 25: "TR-808", 32: "Jazz",
                     40: "Blush", 48: "Orchestra"}
 patch2number = {v: k for k, v in MIDI.Number2patch.items()}
@@ -21,7 +21,7 @@ key_signatures = ['C♭', 'A♭m', 'G♭', 'E♭m', 'D♭', 'B♭m', 'A♭', 'Fm
 
 MAX_SEED = np.iinfo(np.int32).max
 
-# ‼️ Modified generate function to work without Gradio streaming
+
 @torch.inference_mode()
 def generate(model, tokenizer, prompt=None, batch_size=1, max_len=512, temp=1.0, top_p=0.98, top_k=20,
              disable_patch_change=False, disable_control_change=False, disable_channels=None, generator=None):
@@ -57,7 +57,7 @@ def generate(model, tokenizer, prompt=None, batch_size=1, max_len=512, temp=1.0,
     input_tensor = input_tensor[:, -4096:]
     cur_len = input_tensor.shape[1]
     
-    # ‼️ Progress bar for console
+
     bar = tqdm.tqdm(desc="Generating", total=max_len - cur_len)
     
     from transformers import DynamicCache
@@ -138,14 +138,14 @@ def generate(model, tokenizer, prompt=None, batch_size=1, max_len=512, temp=1.0,
 
 def main():
     parser = argparse.ArgumentParser(description="MIDI Model CLI Generator")
-    # ‼️ CLI Arguments definition
+
     parser.add_argument("--model_path", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name (e.g. tv2o-medium) or path to config.json")
     parser.add_argument("--lora_path", type=str, default=None, help="Path to LoRA adapter folder or huggingface id")
     parser.add_argument("--output", type=str, default="output.mid", help="Output MIDI filename")
     parser.add_argument("--num_events", type=int, default=512, help="Max MIDI events to generate")
     parser.add_argument("--batch_size", type=int, default=1, help="Number of files to generate")
-    parser.add_argument("--verbose", action="store_true", help="Print generated events to console") # ‼️ Added Verbose Flag
+    parser.add_argument("--verbose", action="store_true", help="Print generated events to console")
     
     # Prompt Options
     parser.add_argument("--input_midi", type=str, help="Input MIDI file to continue from")
@@ -193,7 +193,7 @@ def main():
     
     model.load_state_dict(state_dict, strict=False)
 
-    # ‼️ Added LoRA loading logic
+
     if args.lora_path:
         print(f"Loading and merging LoRA from {args.lora_path}...")
         model = model.load_merge_lora(args.lora_path)
@@ -225,7 +225,7 @@ def main():
         mid_list = [tokenizer.bos_id] + [tokenizer.pad_id] * (tokenizer.max_token_seq - 1)
         mid_prompt = [mid_list]
 
-        # ‼️ Improved Prompt Logic: Default to standard structure to help melody generation
+
         forced_time_sig = False
         forced_bpm = False
 
@@ -234,7 +234,7 @@ def main():
                 nn, dd = args.time_sig.split('/')
                 dd_map = {2: 1, 4: 2, 8: 3}
                 mid_prompt.append(tokenizer.event2tokens(["time_signature", 0, 0, 0, int(nn)-1, dd_map.get(int(dd), 2)]))
-            # ‼️ If no time sig provided but instruments are, default to 4/4 to structure melody
+
             elif args.instruments:
                 print("ℹ️  Auto-selecting 4/4 Time Signature")
                 mid_prompt.append(tokenizer.event2tokens(["time_signature", 0, 0, 0, 3, 2])) # 4/4
@@ -247,7 +247,7 @@ def main():
 
         if args.bpm != 0:
             mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, args.bpm]))
-        # ‼️ If no BPM provided but instruments are, default to 120 to structure melody
+
         elif args.instruments:
             print("ℹ️  Auto-selecting 120 BPM")
             mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, 120]))
@@ -284,7 +284,7 @@ def main():
         seq = tokens.tolist()
         mid_score = tokenizer.detokenize(seq)
         
-        # ‼️ Verbose Output: Print events to help debug "no melody" issues
+
         if args.verbose:
             print(f"\n--- Events for Batch {i} ---")
             for t_seq in seq:
@@ -303,4 +303,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
