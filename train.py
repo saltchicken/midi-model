@@ -428,7 +428,14 @@ if __name__ == '__main__':
         train_dataset_len = full_dataset_len - val_len
         print(f"ℹ️ Auto-adjusting: {train_dataset_len} training files, {val_len} validation files.")
     else:
-        train_dataset_len = full_dataset_len - opt.data_val_split
+        remaining_train = full_dataset_len - opt.data_val_split
+        if remaining_train < (full_dataset_len * 0.5):
+            val_len = int(full_dataset_len * 0.1)
+            train_dataset_len = full_dataset_len - val_len
+            print(f"⚠️ Validation split ({opt.data_val_split}) is too large for dataset size ({full_dataset_len}).")
+            print(f"ℹ️ Auto-adjusting to 10% validation: {train_dataset_len} training files, {val_len} validation files.")
+        else:
+            train_dataset_len = full_dataset_len - opt.data_val_split
 
     train_midi_list = midi_list[:train_dataset_len]
     val_midi_list = midi_list[train_dataset_len:]
