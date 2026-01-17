@@ -381,6 +381,14 @@ if __name__ == '__main__':
         "--val-step", type=int, default=1600, help="valid and save every n steps, set 0 to valid and save every epoch"
     )
 
+    # ‼️ Added CLI arguments for Lora configuration
+    parser.add_argument(
+        "--lora-rank", type=int, default=64, help="lora rank"
+    )
+    parser.add_argument(
+        "--lora-alpha", type=int, default=128, help="lora alpha"
+    )
+
     opt = parser.parse_args()
     print(opt)
 
@@ -443,11 +451,11 @@ if __name__ == '__main__':
     if opt.task == "lora":
         model.requires_grad_(False)
         lora_config = LoraConfig(
-            r=64,
+            r=opt.lora_rank, # ‼️ Changed from hardcoded 64
             target_modules=["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"],
             task_type=TaskType.CAUSAL_LM,
             bias="none",
-            lora_alpha=128,
+            lora_alpha=opt.lora_alpha, # ‼️ Changed from hardcoded 128
             lora_dropout=0
         )
         model.add_adapter(lora_config)
