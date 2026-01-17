@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime # ‼️ Added for timestamping
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -123,7 +124,7 @@ def generate(model, tokenizer, prompt=None, batch_size=1, max_len=512, temp=1.0,
             
             if next_token_seq.shape[1] < max_token_seq:
                 next_token_seq = F.pad(next_token_seq, (0, max_token_seq - next_token_seq.shape[1]),
-                                       "constant", value=tokenizer.pad_id)
+                                     "constant", value=tokenizer.pad_id)
             
             next_token_seq = next_token_seq.unsqueeze(1)
             input_tensor = torch.cat([input_tensor, next_token_seq], dim=1)
@@ -279,6 +280,21 @@ def main():
     )
 
     # 4. Save Output
+
+    # ‼️ Create output directory
+    os.makedirs("output", exist_ok=True)
+
+    # ‼️ Determine naming components (LoRA name and timestamp)
+    if args.lora_path:
+        lora_name = os.path.basename(args.lora_path)
+        # Clean extension if provided as path
+        if lora_name.endswith('.safetensors') or lora_name.endswith('.pt') or lora_name.endswith('.ckpt'):
+             lora_name = os.path.splitext(lora_name)[0]
+    else:
+        lora_name = "base_model"
+        
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") # ‼️ Get current timestamp
+
     for i in range(args.batch_size):
         tokens = output_tokens[i]
         seq = tokens.tolist()
@@ -292,10 +308,8 @@ def main():
                 if event:
                     print(event)
 
-        fname = args.output
-        if args.batch_size > 1:
-            base, ext = os.path.splitext(fname)
-            fname = f"{base}_{i}{ext}"
+        # ‼️ Construct filename with output folder, lora name, timestamp, and batch index
+        fname = f"output/{lora_name}_{timestamp}_{i}.mid"
             
         with open(fname, 'wb') as f:
             f.write(MIDI.score2midi(mid_score))
