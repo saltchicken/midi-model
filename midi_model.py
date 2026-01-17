@@ -18,7 +18,7 @@ class MIDIModelConfig(PretrainedConfig):
     model_type = "midi_model"
 
     def __init__(self,
-                 tokenizer: Union[MIDITokenizerV1, MIDITokenizerV2, Dict]=None,
+                 tokenizer: Union[MIDITokenizerV2, Dict]=None,
                  net_config: Union[LlamaConfig, Dict]=None,
                  net_token_config: Union[LlamaConfig, Dict]=None,
                  **kwargs):
