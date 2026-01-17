@@ -397,6 +397,8 @@ if __name__ == '__main__':
     opt = parser.parse_args()
     print(opt)
 
+    torch.set_float32_matmul_precision('medium')
+
     if not os.path.exists("lightning_logs"):
         os.mkdir("lightning_logs")
     if not os.path.exists("sample"):
