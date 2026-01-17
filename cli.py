@@ -144,6 +144,7 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name (e.g. tv2o-medium) or path to config.json")
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter folder or huggingface id")
+    parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA (default 1.0)") # ‼️ Added strength arg
     parser.add_argument("--output", type=str, default="output.mid", help="Output MIDI filename")
     parser.add_argument("--num_events", type=int, default=512, help="Max MIDI events to generate")
     parser.add_argument("--batch_size", type=int, default=1, help="Number of files to generate")
@@ -205,8 +206,8 @@ def main():
                 print(f"Found LoRA at {potential_path}")
                 lora_path = potential_path
         
-        print(f"Loading and merging LoRA from {lora_path}...")
-        model = model.load_merge_lora(lora_path)
+        print(f"Loading and merging LoRA from {lora_path} with strength {args.lora_strength}...") # ‼️ Added logging
+        model = model.load_merge_lora(lora_path, lora_scale=args.lora_strength) # ‼️ Pass strength
 
     model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 

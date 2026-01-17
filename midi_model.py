@@ -106,10 +106,17 @@ class MIDIModel(PreTrainedModel):
         self.net_token = LlamaModel(config.net_token_config)
         self.lm_head = nn.Linear(config.n_embd, self.tokenizer.vocab_size, bias=False)
 
-    def load_merge_lora(self, model_id):
+    def load_merge_lora(self, model_id, lora_scale=1.0):
         peft_config = PeftConfig.from_pretrained(model_id)
         model = LoraModel(self, peft_config, adapter_name="default")
         adapter_state_dict = load_peft_weights(model_id, device=str(self.device))
+
+        if lora_scale != 1.0:
+            for key in adapter_state_dict.keys():
+                # Scaling lora_B is sufficient to scale the whole adaptation
+                if "lora_B" in key:
+                    adapter_state_dict[key] *= lora_scale
+
         set_peft_model_state_dict(self, adapter_state_dict, "default")
         return model.merge_and_unload()
 
