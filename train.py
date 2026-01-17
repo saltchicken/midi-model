@@ -20,7 +20,7 @@ from torch.utils.data import Dataset, DataLoader
 
 import MIDI
 from midi_model import MIDIModel, MIDIModelConfig, config_name_list
-from midi_tokenizer import MIDITokenizerV1, MIDITokenizerV2
+from midi_tokenizer import MIDITokenizerV2
 
 EXTENSION = [".mid", ".midi"]
 
@@ -30,7 +30,7 @@ def file_ext(fname):
 
 
 class MidiDataset(Dataset):
-    def __init__(self, midi_list, tokenizer: Union[MIDITokenizerV1, MIDITokenizerV2], max_len=2048, min_file_size=3000,
+    def __init__(self, midi_list, tokenizer: Union[MIDITokenizerV2], max_len=2048, min_file_size=3000,
                  max_file_size=384000,
                  aug=True, check_quality=False, rand_start=True):
 
