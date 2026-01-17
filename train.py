@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from lightning import Trainer
 from lightning.fabric.utilities import rank_zero_only
 from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
 from peft import LoraConfig, TaskType
 from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file
 from torch import optim
@@ -381,12 +382,16 @@ if __name__ == '__main__':
         "--val-step", type=int, default=1600, help="valid and save every n steps, set 0 to valid and save every epoch"
     )
 
-    # ‼️ Added CLI arguments for Lora configuration
+
     parser.add_argument(
         "--lora-rank", type=int, default=64, help="lora rank"
     )
     parser.add_argument(
         "--lora-alpha", type=int, default=128, help="lora alpha"
+    )
+
+    parser.add_argument(
+        "--name", type=str, default="default", help="experiment name (output directory name)"
     )
 
     opt = parser.parse_args()
@@ -404,11 +409,32 @@ if __name__ == '__main__':
         config = MIDIModelConfig.from_json_file(opt.config)
     tokenizer = config.tokenizer
     midi_list = get_midi_list(opt.data)
+
+
+    if not midi_list:
+        raise ValueError(f"No MIDI files found in {opt.data}")
+
     random.shuffle(midi_list)
     full_dataset_len = len(midi_list)
-    train_dataset_len = full_dataset_len - opt.data_val_split
+
+
+    if full_dataset_len <= opt.data_val_split:
+        print(f"⚠️ Dataset size ({full_dataset_len}) is smaller than validation split ({opt.data_val_split}).")
+        val_len = max(1, int(full_dataset_len * 0.1)) # Use 10% for val
+        if val_len >= full_dataset_len:
+             val_len = 0 # If only 1 file, use it for training
+        train_dataset_len = full_dataset_len - val_len
+        print(f"ℹ️ Auto-adjusting: {train_dataset_len} training files, {val_len} validation files.")
+    else:
+        train_dataset_len = full_dataset_len - opt.data_val_split
+
     train_midi_list = midi_list[:train_dataset_len]
     val_midi_list = midi_list[train_dataset_len:]
+
+
+    if len(train_midi_list) == 0:
+         raise ValueError("Training dataset is empty after split. Please provide more data.")
+
     train_dataset = MidiDataset(train_midi_list, tokenizer, max_len=opt.max_len, aug=True, check_quality=opt.quality,
                                 rand_start=True)
     val_dataset = MidiDataset(val_midi_list, tokenizer, max_len=opt.max_len, aug=False, check_quality=opt.quality,
@@ -451,11 +477,11 @@ if __name__ == '__main__':
     if opt.task == "lora":
         model.requires_grad_(False)
         lora_config = LoraConfig(
-            r=opt.lora_rank, # ‼️ Changed from hardcoded 64
+            r=opt.lora_rank,
             target_modules=["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"],
             task_type=TaskType.CAUSAL_LM,
             bias="none",
-            lora_alpha=opt.lora_alpha, # ‼️ Changed from hardcoded 128
+            lora_alpha=opt.lora_alpha,
             lora_dropout=0
         )
         model.add_adapter(lora_config)
@@ -474,6 +500,9 @@ if __name__ == '__main__':
     if val_check_interval is not None:
         val_check_interval = min(val_check_interval, len(train_dataloader))
 
+
+    logger = TensorBoardLogger("lightning_logs", name=opt.name)
+
     trainer = Trainer(
         precision=opt.precision,
         accumulate_grad_batches=opt.acc_grad,
@@ -487,6 +516,7 @@ if __name__ == '__main__':
         log_every_n_steps=1,
         strategy="auto",
         callbacks=callbacks,
+        logger=logger,
     )
     ckpt_path = opt.resume
     if ckpt_path == "":
