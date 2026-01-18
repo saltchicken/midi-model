@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name or path")
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter")
+    parser.add_argument("--best_lora", action="store_true", help="Use best_lora directory if available") # ‼️ Added arg
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA")
     parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0)")
     
@@ -87,26 +88,49 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
     if args.lora:
+        # ‼️ Logic for finding LoRA with best_lora support
+        potential_paths = []
+        
+        # 1. Try deriving best_lora from input path if flag is set
+        if args.best_lora:
+            # If input ends in 'lora', look for sibling 'best_lora'
+            if args.lora.rstrip(os.sep).endswith("lora"):
+                    parent = os.path.dirname(args.lora.rstrip(os.sep))
+                    potential_paths.append(os.path.join(parent, "best_lora"))
+            # Look for child 'best_lora'
+            potential_paths.append(os.path.join(args.lora, "best_lora"))
 
-        lora_path = args.lora
-        if not os.path.exists(lora_path):
-            potential_paths = []
-            
+        # 2. Add standard search locations
+        search_roots = []
+        if args.version:
+                search_roots.append(os.path.join("lightning_logs", args.lora, args.version))
+        
+        search_roots.extend([
+            os.path.join("models", "loras", args.lora),
+            os.path.join("models", args.lora),
+            os.path.join("lightning_logs", args.lora),
+        ])
 
-            if args.version:
-                 potential_paths.append(os.path.join("lightning_logs", args.lora, args.version, "lora"))
-
-            potential_paths.extend([
-                os.path.join("models", "loras", args.lora),
-                os.path.join("models", args.lora),
-                os.path.join("lightning_logs", args.lora),
-            ])
-            
-            for p in potential_paths:
-                if os.path.exists(p):
-                    print(f"‼️ Found LoRA at {p}")
-                    lora_path = p
-                    break
+        for root in search_roots:
+            if args.best_lora:
+                potential_paths.append(os.path.join(root, "best_lora"))
+            potential_paths.append(os.path.join(root, "lora"))
+            potential_paths.append(root)
+        
+        # 3. Handle the direct argument (fallback or primary)
+        if not args.best_lora:
+             # If not asking for best, prioritize the specific path user gave
+             potential_paths.insert(0, args.lora)
+        else:
+             # If asking for best, the direct path is a fallback
+             potential_paths.append(args.lora)
+        
+        lora_path = args.lora # Default for display if nothing found
+        for p in potential_paths:
+            if os.path.exists(p):
+                print(f"‼️ Found LoRA at {p}")
+                lora_path = p
+                break
         
         print(f"Loading LoRA: {lora_path}")
         model = model.load_merge_lora(lora_path, lora_scale=args.lora_strength)
@@ -125,7 +149,7 @@ def main():
             midi_data = f.read()
         mid_score = MIDI.midi2score(midi_data)
         mid_tokens = tokenizer.tokenize(mid_score, cc_eps=4, tempo_eps=4, 
-                                      remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
+                                        remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
         
         if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id:
             mid_tokens = mid_tokens[:-1]
