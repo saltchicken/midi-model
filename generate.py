@@ -23,10 +23,10 @@ def main():
     # Model Args
     parser.add_argument("--model", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name or path")
-    parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter")
-    parser.add_argument("--best_lora", action="store_true", help="Use best_lora directory if available") # ‼️ Added arg
+    parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter or 'random'")
+    parser.add_argument("--best_lora", action="store_true", help="Use best_lora directory if available")
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA")
-    parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0)")
+    parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0) or 'random'") # ‼️ Added 'random' support
     
     # Input Args (Dual Mode)
     parser.add_argument("--input", type=str, default=None, help="Input MIDI file. If provided, acts as completion mode.")
@@ -88,16 +88,47 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
     if args.lora:
-        # ‼️ Logic for finding LoRA with best_lora support
+        # ‼️ Randomize LoRA selection
+        if args.lora.lower() == "random":
+            all_loras = []
+            scan_roots = ["models/loras", "models", "lightning_logs"]
+            
+            for root_dir in scan_roots:
+                if not os.path.exists(root_dir):
+                    continue
+                for root, dirs, files in os.walk(root_dir):
+                    if "adapter_config.json" in files:
+                        all_loras.append(root)
+            
+            if not all_loras:
+                print("❌ No LoRAs found to pick from randomly.")
+                return
+            
+            args.lora = random.choice(all_loras)
+            print(f"🎲 Randomly selected LoRA Path: {args.lora}")
+
+        # ‼️ Randomize Version selection if requested
+        if args.version and args.version.lower() == "random":
+            log_base = os.path.join("lightning_logs", os.path.basename(args.lora.rstrip(os.sep)))
+            if os.path.exists(log_base):
+                versions = [d for d in os.listdir(log_base) if os.path.isdir(os.path.join(log_base, d)) and d.startswith("version_")]
+                if versions:
+                    args.version = random.choice(versions)
+                    print(f"🎲 Randomly selected Version: {args.version}")
+                else:
+                    args.version = None
+                    print("⚠️ No version folders found, using base LoRA path.")
+            else:
+                args.version = None
+                print(f"⚠️ Log base {log_base} not found, using base LoRA path.")
+
         potential_paths = []
         
         # 1. Try deriving best_lora from input path if flag is set
         if args.best_lora:
-            # If input ends in 'lora', look for sibling 'best_lora'
             if args.lora.rstrip(os.sep).endswith("lora"):
                     parent = os.path.dirname(args.lora.rstrip(os.sep))
                     potential_paths.append(os.path.join(parent, "best_lora"))
-            # Look for child 'best_lora'
             potential_paths.append(os.path.join(args.lora, "best_lora"))
 
         # 2. Add standard search locations
@@ -119,15 +150,13 @@ def main():
         
         # 3. Handle the direct argument (fallback or primary)
         if not args.best_lora:
-             # If not asking for best, prioritize the specific path user gave
              potential_paths.insert(0, args.lora)
         else:
-             # If asking for best, the direct path is a fallback
              potential_paths.append(args.lora)
         
-        lora_path = args.lora # Default for display if nothing found
+        lora_path = args.lora 
         for p in potential_paths:
-            if os.path.exists(p):
+            if os.path.exists(p) and (os.path.isdir(p) or p.endswith(".safetensors")):
                 print(f"‼️ Found LoRA at {p}")
                 lora_path = p
                 break
@@ -211,11 +240,11 @@ def main():
                     if mid_tokens and mid_tokens[0][0] == tokenizer.bos_id:
                         mid_tokens = [mid_tokens[0]] + mid_tokens[-(limit-1):]
                     else:
-                        mid_tokens = mid_tokens[-limit:]
+                        mid_tokens = [mid_tokens[0]] + mid_tokens[-limit:]
 
         mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
 
-    # Strategy B: Construct from Args (Scratch Mode - from cli.py)
+    # Strategy B: Construct from Args (Scratch Mode)
     else:
         print("Constructing prompt from arguments...")
         mid_list = [tokenizer.bos_id] + [tokenizer.pad_id] * (tokenizer.max_token_seq - 1)
