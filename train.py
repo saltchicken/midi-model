@@ -372,6 +372,9 @@ if __name__ == '__main__':
     parser.add_argument(
         "--quality", action="store_true", default=False, help="check dataset quality"
     )
+    parser.add_argument(
+        "--no-aug", action="store_true", default=False, help="disable data augmentation" 
+    ) 
 
     # training args
     parser.add_argument("--seed", type=int, default=0, help="seed")
@@ -498,7 +501,7 @@ if __name__ == '__main__':
     if len(train_midi_list) == 0:
          raise ValueError("Training dataset is empty after split. Please provide more data.")
 
-    train_dataset = MidiDataset(train_midi_list, tokenizer, max_len=opt.max_len, aug=True, check_quality=opt.quality,
+    train_dataset = MidiDataset(train_midi_list, tokenizer, max_len=opt.max_len, aug=not opt.no_aug, check_quality=opt.quality,
                                 rand_start=True)
     val_dataset = MidiDataset(val_midi_list, tokenizer, max_len=opt.max_len, aug=False, check_quality=opt.quality,
                               rand_start=False)
@@ -587,7 +590,6 @@ if __name__ == '__main__':
     )
     callbacks = [checkpoint_callback]
     
-
     save_best_peft_callback = SaveBestPeftCallback(monitor="val/loss", mode="min")
     callbacks.append(save_best_peft_callback)
 
