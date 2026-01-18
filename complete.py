@@ -22,6 +22,10 @@ def main():
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter if using one.")
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA.")
     
+
+    parser.add_argument("--segment_mode", choices=["start", "end"], default="end", help="Whether to take context from the start or end of the input file.")
+    parser.add_argument("--segment_limit", type=int, default=None, help="Number of events to use for context (default: max available).")
+    
     # Generation Parameters
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility.")
     parser.add_argument("--temp", type=float, default=1.0, help="Temperature (creativity).")
@@ -63,7 +67,6 @@ def main():
 
     # 4. Load LoRA (Optional)
     if args.lora:
-        # ‼️ Added robust path checking for LoRA to match cli.py behavior
         lora_path = args.lora
         if not os.path.exists(args.lora):
             potential_path = os.path.join("models", "loras", args.lora)
@@ -86,14 +89,47 @@ def main():
                                     remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
 
 
-    # We want to keep the END of the file so the model continues it.
-    # We also need to leave room for the new events (args.num_events).
-    max_context = 4096 # Standard model limit
-    safe_prompt_len = max_context - args.num_events - 16 # Buffer
+    # The tokenizer adds BOS at [0] and EOS at [-1]. 
+    if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id:
+        mid_tokens = mid_tokens[:-1]
 
-    if len(mid_tokens) > safe_prompt_len:
-        print(f"⚠️ Input too long ({len(mid_tokens)} tokens). Keeping last {safe_prompt_len} tokens.")
-        mid_tokens = mid_tokens[-safe_prompt_len:]
+
+    max_context = 4096 
+    safe_len = max_context - args.num_events - 16 # Buffer space
+    
+    # Determine the actual limit to apply
+    limit = safe_len
+    if args.segment_limit and args.segment_limit > 0:
+        if args.segment_limit > safe_len:
+            print(f"⚠️ Requested segment limit {args.segment_limit} exceeds max context. Clamping to {safe_len}.")
+            limit = safe_len
+        else:
+            limit = args.segment_limit
+    
+
+    if len(mid_tokens) > limit:
+        if args.segment_mode == "start":
+            print(f"‼️ Segment Mode: START | Taking first {limit} events.")
+            # Simple slice, BOS is preserved at index 0
+            mid_tokens = mid_tokens[:limit]
+        else:
+            print(f"‼️ Segment Mode: END | Taking last {limit} events.")
+            # When taking from end, we must be careful to preserve BOS at index 0 if it exists
+            # mid_tokens[0] is the BOS event.
+            if mid_tokens and mid_tokens[0][0] == tokenizer.bos_id:
+                bos_event = mid_tokens[0]
+                content_tokens = mid_tokens[1:] # All events except BOS
+                
+                # Take the last (limit - 1) events from content
+                content_tokens = content_tokens[-(limit - 1):]
+                
+                # Reconstruct: [BOS] + [Tail]
+                mid_tokens = [bos_event] + content_tokens
+            else:
+                # Fallback (rare): just take the end
+                mid_tokens = mid_tokens[-limit:]
+    else:
+        print(f"ℹ️ Input length ({len(mid_tokens)}) fits within limit ({limit}). Using full input.")
     
     mid_np = np.asarray([mid_tokens], dtype=np.int64)
 
@@ -105,7 +141,6 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    # ‼️ Added CUDA seed setting for consistency
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
@@ -121,10 +156,9 @@ def main():
     )
 
     # 7. Save Output
-    output_path = os.path.abspath(args.output) # ‼️ Resolve full absolute path so you know exactly where it is
+    output_path = os.path.abspath(args.output)
     print(f"SAVING: {output_path}")
 
-    # ‼️ Ensure directory exists
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -132,7 +166,7 @@ def main():
     mid_score_out = tokenizer.detokenize(output_tokens[0].tolist())
     with open(output_path, 'wb') as f:
         f.write(MIDI.score2midi(mid_score_out))
-    print(f"Done! File saved successfully at: {output_path}") # ‼️ Final confirmation
+    print(f"Done! File saved successfully at: {output_path}")
 
 if __name__ == "__main__":
     main()
