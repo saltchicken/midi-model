@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from lightning import Trainer
 from lightning.fabric.utilities import rank_zero_only
-from lightning.pytorch.callbacks import ModelCheckpoint, Callback # ‼️ Added Callback
+from lightning.pytorch.callbacks import ModelCheckpoint, Callback
 from lightning.pytorch.loggers import TensorBoardLogger
 from peft import LoraConfig, TaskType
 from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file
@@ -103,7 +103,7 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
     return LambdaLR(optimizer, lr_lambda, last_epoch)
 
 
-# ‼️ Added Custom Callback to save best LoRA
+
 class SaveBestPeftCallback(Callback):
     def __init__(self, monitor="val/loss", mode="min"):
         super().__init__()
@@ -132,6 +132,9 @@ class SaveBestPeftCallback(Callback):
             self.best_score = score
             # Only run on global rank 0 to avoid race conditions/multiple writes
             if trainer.is_global_zero:
+
+                print(f"‼️ Best model found at Step {trainer.global_step}, Epoch {trainer.current_epoch} | val/loss: {score:.4f}")
+
                 # Check if PEFT config exists (meaning LoRA is active)
                 # pl_module might have 'peft_config' attribute if it's a PeftModel or wraps one
                 if hasattr(pl_module, "peft_config") and pl_module.peft_config:
@@ -147,7 +150,7 @@ class SaveBestPeftCallback(Callback):
                          save_dir = trainer.default_root_dir
                     
                     best_path = os.path.join(save_dir, "best_lora")
-                    print(f"‼️ Best model found (val/loss: {score:.4f}). Saving LoRA to {best_path}")
+                    print(f"‼️ Saving Best LoRA to {best_path}")
                     
                     try:
                         pl_module.save_peft(best_path)
@@ -290,7 +293,7 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             os.makedirs(save_dir, exist_ok=True)
         adapter_config.save_pretrained(save_dir)
         adapter_state_dict = self.get_adapter_state_dict(adapter_name)
-        # ‼️ Explicitly save as .safetensors
+
         safe_save_file(adapter_state_dict,
                        os.path.join(save_dir, "adapter_model.safetensors"),
                        metadata={"format": "pt"})
@@ -584,7 +587,7 @@ if __name__ == '__main__':
     )
     callbacks = [checkpoint_callback]
     
-    # ‼️ Add the new callback
+
     save_best_peft_callback = SaveBestPeftCallback(monitor="val/loss", mode="min")
     callbacks.append(save_best_peft_callback)
 
