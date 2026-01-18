@@ -86,7 +86,7 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
     if args.lora:
-        # ‼️ Path resolution logic restored to fix "Repository Not Found" errors
+
         lora_path = args.lora
         if not os.path.exists(lora_path):
             potential_paths = [
@@ -124,7 +124,7 @@ def main():
         
         full_mid_tokens = list(mid_tokens)
 
-        # ‼️ Segmentation Logic (Merged from complete.py)
+
         # Calculate Segment Limits
         max_context = 4096 
         safe_len = max_context - 16 
