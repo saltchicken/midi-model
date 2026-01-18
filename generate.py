@@ -44,6 +44,13 @@ def calculate_chunk_duration(score, current_tempo):
     seconds = (max_tick / ticks_per_beat) * (current_tempo / 1000000.0)
     return seconds
 
+# ‼️ Helper to trim the end of the generation to avoid cadence/resolution artifacts ‼️
+def trim_tokens(tokenizer, tokens, n_events_to_trim=8):
+    # ‼️ FIX: Simply slice. Python handles slicing larger than list length gracefully (returns empty).
+    # Previous logic returned the FULL list if it was short, which is bad (plays the ending).
+    if n_events_to_trim <= 0: return tokens
+    return tokens[:-n_events_to_trim]
+
 def main():
     parser = argparse.ArgumentParser(description="Unified MIDI Generator (Generation & Completion)")
 
@@ -305,8 +312,8 @@ def main():
         print("   (Press Ctrl+C to stop)")
         
         # Queue for playback
-        # ‼️ Increased buffer size to 8 (was 2) to buffer ahead and avoid pauses
-        playback_queue = queue.Queue(maxsize=8)
+        # ‼️ Increased buffer size to 16 (was 8) to buffer ahead and avoid pauses
+        playback_queue = queue.Queue(maxsize=16)
         
         # ‼️ Shared state for graceful shutdown ‼️
         stop_event = threading.Event()
@@ -337,8 +344,8 @@ def main():
                     
                     # ‼️ If we recovered from an underrun, notify user ‼️
                     if underrun_flag:
-                         print(f"\n▶️ Buffer recovered. Resuming playback...    ")
-                         underrun_flag = False
+                          print(f"\n▶️ Buffer recovered. Resuming playback...    ")
+                          underrun_flag = False
 
                 except queue.Empty:
                     # ‼️ If queue is empty, generation is lagging behind playback ‼️
@@ -370,8 +377,9 @@ def main():
                         pass 
 
                     # ‼️ Sleep for duration minus overlap
-                    # We start the NEXT process 0.1s before this one finishes to cover startup latency
-                    overlap = 0.1
+                    # We start the NEXT process slightly before this one finishes to cover startup latency
+                    # ‼️ Increased overlap to 0.15s to smooth transition
+                    overlap = 0.15
                     sleep_time = max(0, duration - overlap)
                     
                     if stop_event.wait(sleep_time):
@@ -390,7 +398,8 @@ def main():
         current_patches = {} # {channel: patch}
         
         current_prompt = mid_np
-        chunk_size = args.num_events if args.num_events < 1000 else 256
+        # ‼️ Use the argument passed directly, removing the cap that forced 256 for large values
+        chunk_size = args.num_events
         chunk_count = 0
         
         try:
@@ -399,7 +408,7 @@ def main():
 
                 # Prevent prompt from growing too large (keep last 2048 tokens)
                 if current_prompt.shape[1] > 2048:
-                     current_prompt = current_prompt[:, -2048:]
+                      current_prompt = current_prompt[:, -2048:]
                 
                 gen_len = current_prompt.shape[1] + chunk_size
                 
@@ -426,8 +435,19 @@ def main():
                     print("\n⚠️ Model stopped generating. Reseeding...")
                     continue
 
-                # Detokenize to get the Score
-                chunk_score = tokenizer.detokenize(new_tokens)
+                # ‼️ Shave off the end of the previous segment so it doesn't sound like it's ending ‼️
+                n_trim = 128 # ‼️ Aggressively remove last 128 events (Increased from 64)
+                trimmed_tokens = trim_tokens(tokenizer, new_tokens, n_events_to_trim=n_trim)
+                
+                # ‼️ DEBUG: Verify trimming (Made unconditional for debugging)
+                print(f"\n✂️ Trimmed: {len(new_tokens)} -> {len(trimmed_tokens)} events")
+
+                if len(trimmed_tokens) == 0:
+                     print("\n⚠️ Generation shorter than trim amount. Skipping...")
+                     continue
+
+                # Detokenize to get the Score using TRIMMED tokens
+                chunk_score = tokenizer.detokenize(trimmed_tokens)
                 
 
                 if len(chunk_score) > 1:
@@ -455,14 +475,18 @@ def main():
                     # ‼️ Push tuple (data, duration)
                     playback_queue.put((midi_bytes, chunk_duration))
                 
-                # ‼️ Start player thread only after we have buffered 2 chunks to avoid gaps
-                if player_thread is None and playback_queue.qsize() >= 2:
-                     print("\n▶️ Buffer filled. Starting Playback...")
-                     player_thread = threading.Thread(target=player_worker, daemon=True)
-                     player_thread.start()
+                # ‼️ Start player thread only after we have buffered 4 chunks to avoid gaps
+                if player_thread is None and playback_queue.qsize() >= 4:
+                      print("\n▶️ Buffer filled. Starting Playback...")
+                      player_thread = threading.Thread(target=player_worker, daemon=True)
+                      player_thread.start()
                 
                 # Update prompt for next iteration
-                current_prompt = output
+                # ‼️ Crucial: We update prompt using the TRIMMED output so the model regenerates the trimmed tail
+                # output shape is (1, seq_len). We slice it to match prompt + trimmed_new_tokens
+                kept_len = current_prompt.shape[1] + len(trimmed_tokens)
+                current_prompt = output[:, :kept_len]
+                
                 chunk_count += 1
         except KeyboardInterrupt:
              print("\n‼️ Ctrl+C detected. Stopping playback...")
