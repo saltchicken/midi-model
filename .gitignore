@@ -153,6 +153,7 @@ cython_debug/
 /models/
 output.mid
 /outputs/
+/input/
 /output/
 /soundfont.sf2
 /test.py
