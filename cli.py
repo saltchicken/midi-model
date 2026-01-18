@@ -1,6 +1,6 @@
 import argparse
 import os
-import random # ‼️ Added random for global seeding
+import random
 from datetime import datetime
 import numpy as np
 import torch
@@ -144,7 +144,7 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Path to model file (.ckpt or .safetensors)")
     parser.add_argument("--config", type=str, default="auto", help="Model config name (e.g. tv2o-medium) or path to config.json")
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter folder or huggingface id")
-    parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA (default 1.0)") # ‼️ Added strength arg
+    parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA (default 1.0)")
     parser.add_argument("--output", type=str, default="output.mid", help="Output MIDI filename")
     parser.add_argument("--num_events", type=int, default=512, help="Max MIDI events to generate")
     parser.add_argument("--batch_size", type=int, default=1, help="Number of files to generate")
@@ -158,7 +158,7 @@ def main():
     parser.add_argument("--time_sig", type=str, default="auto", help="Time signature (e.g. 4/4)")
     
     # Gen Options
-    parser.add_argument("--seed", type=int, default=None, help="Random seed") # ‼️ This allows choosing the seed
+    parser.add_argument("--seed", type=int, default=None, help="Random seed")
     parser.add_argument("--temp", type=float, default=1.0, help="Temperature")
     parser.add_argument("--top_p", type=float, default=0.98, help="Top P")
     parser.add_argument("--top_k", type=int, default=20, help="Top K")
@@ -206,8 +206,8 @@ def main():
                 print(f"Found LoRA at {potential_path}")
                 lora_path = potential_path
         
-        print(f"Loading and merging LoRA from {lora_path} with strength {args.lora_strength}...") # ‼️ Added logging
-        model = model.load_merge_lora(lora_path, lora_scale=args.lora_strength) # ‼️ Pass strength
+        print(f"Loading and merging LoRA from {lora_path} with strength {args.lora_strength}...")
+        model = model.load_merge_lora(lora_path, lora_scale=args.lora_strength)
 
     model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 
@@ -215,7 +215,7 @@ def main():
     seed = args.seed if args.seed is not None else np.random.randint(0, MAX_SEED)
     print(f"Seed: {seed}")
     
-    # ‼️ Set global seeds for reproducibility across libraries (random, numpy, torch)
+
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

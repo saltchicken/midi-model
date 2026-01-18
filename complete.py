@@ -77,7 +77,7 @@ def main():
     mid_tokens = tokenizer.tokenize(mid_score, cc_eps=4, tempo_eps=4, 
                                     remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
 
-    # ‼️ CRITICAL: Smart Truncation
+
     # We want to keep the END of the file so the model continues it.
     # We also need to leave room for the new events (args.num_events).
     max_context = 4096 # Standard model limit
