@@ -365,7 +365,7 @@ if __name__ == '__main__':
     parser.add_argument(
         "--data-val-split",
         type=int,
-        default=128,
+        default=0,
         help="the number of midi files divided into the validation set",
     )
     parser.add_argument(
