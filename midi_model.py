@@ -172,32 +172,56 @@ class MIDIModel(PreTrainedModel):
         return next_token
 
     @torch.inference_mode()
-    def generate(self, prompt=None, batch_size=1, max_len=512, temp=1.0, top_p=0.98, top_k=20, generator=None):
+    def generate(self, prompt=None, batch_size=1, max_len=512, temp=1.0, top_p=0.98, top_k=20, 
+                 disable_patch_change=False, disable_control_change=False, disable_channels=None,
+                 stop_bars=None, stop_events=None,
+                 generator=None):
         tokenizer = self.tokenizer
         max_token_seq = tokenizer.max_token_seq
+        
+
+        if disable_channels is not None:
+            disable_channels = [tokenizer.parameter_ids["channel"][c] for c in disable_channels]
+        else:
+            disable_channels = []
+
         if prompt is None:
             input_tensor = torch.full((1, max_token_seq), tokenizer.pad_id, dtype=torch.long, device=self.device)
             input_tensor[0, 0] = tokenizer.bos_id  # bos
             input_tensor = input_tensor.unsqueeze(0)
             input_tensor = torch.cat([input_tensor] * batch_size, dim=0)
         else:
+
+            if isinstance(prompt, np.ndarray):
+                prompt = torch.from_numpy(prompt).to(dtype=torch.long, device=self.device)
+                
             if len(prompt.shape) == 2:
                 prompt = prompt[None, :]
-                prompt = np.repeat(prompt, repeats=batch_size, axis=0)
+                prompt = prompt.repeat(batch_size, 1, 1)
             elif prompt.shape[0] == 1:
-                prompt = np.repeat(prompt, repeats=batch_size, axis=0)
+                prompt = prompt.repeat(batch_size, 1, 1)
             elif len(prompt.shape) != 3 or prompt.shape[0] != batch_size:
                 raise ValueError(f"invalid shape for prompt, {prompt.shape}")
             prompt = prompt[..., :max_token_seq]
             if prompt.shape[-1] < max_token_seq:
-                prompt = np.pad(prompt, ((0, 0), (0, 0), (0, max_token_seq - prompt.shape[-1])),
-                                mode="constant", constant_values=tokenizer.pad_id)
-            input_tensor = torch.from_numpy(prompt).to(dtype=torch.long, device=self.device)
+                prompt = F.pad(prompt, (0, max_token_seq - prompt.shape[-1]), "constant", value=tokenizer.pad_id)
+            input_tensor = prompt
 
+
+        input_tensor = input_tensor[:, -4096:]
         cur_len = input_tensor.shape[1]
-        bar = tqdm.tqdm(desc="generating", total=max_len - cur_len)
+        
+
+        accumulated_beats = 0.0
+        generated_events_count = 0
+        target_beats = stop_bars * 4 if stop_bars else None 
+
+        total_steps = stop_events if stop_events else int(target_beats) if target_beats else (max_len - cur_len)
+        bar = tqdm.tqdm(desc="generating", total=total_steps)
+        
         cache1 = DynamicCache()
         past_len = 0
+        
         with bar:
             while cur_len < max_len:
                 end = [False] * batch_size
@@ -205,6 +229,7 @@ class MIDIModel(PreTrainedModel):
                 next_token_seq = None
                 event_names = [""] * batch_size
                 cache2 = DynamicCache()
+                
                 for i in range(max_token_seq):
                     mask = torch.zeros((batch_size, tokenizer.vocab_size), dtype=torch.int64, device=self.device)
                     for b in range(batch_size):
@@ -212,13 +237,27 @@ class MIDIModel(PreTrainedModel):
                             mask[b, tokenizer.pad_id] = 1
                             continue
                         if i == 0:
-                            mask[b, list(tokenizer.event_ids.values()) + [tokenizer.eos_id]] = 1
+
+                            mask_ids = list(tokenizer.event_ids.values()) + [tokenizer.eos_id]
+                            if disable_patch_change:
+                                mask_ids.remove(tokenizer.event_ids["patch_change"])
+                            if disable_control_change:
+                                mask_ids.remove(tokenizer.event_ids["control_change"])
+                            mask[b, mask_ids] = 1
                         else:
                             param_names = tokenizer.events[event_names[b]]
                             if i > len(param_names):
                                 mask[b, tokenizer.pad_id] = 1
                                 continue
-                            mask[b, tokenizer.parameter_ids[param_names[i - 1]]] = 1
+                            param_name = param_names[i - 1]
+                            mask_ids = tokenizer.parameter_ids[param_name]
+                            
+
+                            if param_name == "channel":
+                                mask_ids = [idx for idx in mask_ids if idx not in disable_channels]
+                                
+                            mask[b, mask_ids] = 1
+                            
                     mask = mask.unsqueeze(1)
                     x = next_token_seq
                     if i != 0:
@@ -245,13 +284,34 @@ class MIDIModel(PreTrainedModel):
 
                 if next_token_seq.shape[1] < max_token_seq:
                     next_token_seq = F.pad(next_token_seq, (0, max_token_seq - next_token_seq.shape[1]),
-                                           "constant", value=tokenizer.pad_id)
+                                             "constant", value=tokenizer.pad_id)
                 next_token_seq = next_token_seq.unsqueeze(1)
                 input_tensor = torch.cat([input_tensor, next_token_seq], dim=1)
                 past_len = cur_len
                 cur_len += 1
-                bar.update(1)
+                generated_events_count += 1
+                
+
+                if not end[0] and target_beats:
+                    # Extract time1 token (index 1) from the generated event (batch index 0)
+                    t1_id = next_token_seq[0, 0, 1].item()
+                    if t1_id >= tokenizer.parameter_ids["time1"][0]:
+                        t1_val = t1_id - tokenizer.parameter_ids["time1"][0]
+                        accumulated_beats += t1_val
+                
+                if target_beats:
+                    bar.n = min(int(accumulated_beats), int(target_beats))
+                    bar.refresh()
+                else:
+                    bar.update(1)
 
                 if all(end):
                     break
+                    
+                if target_beats and accumulated_beats >= target_beats:
+                    break
+                
+                if stop_events and generated_events_count >= stop_events:
+                    break
+
         return input_tensor.cpu().numpy()
