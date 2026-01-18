@@ -1,6 +1,11 @@
 import argparse
 import os
 import random
+import sys
+import queue
+import threading
+import subprocess
+import time
 from datetime import datetime
 import numpy as np
 import torch
@@ -16,6 +21,28 @@ patch2number = {v: k for k, v in MIDI.Number2patch.items()}
 key_signatures = ['C♭', 'A♭m', 'G♭', 'E♭m', 'D♭', 'B♭m', 'A♭', 'Fm', 'E♭', 'Cm', 'B♭', 'Gm', 'F', 'Dm',
                   'C', 'Am', 'G', 'Em', 'D', 'Bm', 'A', 'F♯m', 'E', 'C♯m', 'B', 'G♯m', 'F♯', 'D♯m', 'C♯', 'A♯m']
 MAX_SEED = np.iinfo(np.int32).max
+
+# ‼️ Helper to calculate duration for seamless looping ‼️
+def calculate_chunk_duration(score, current_tempo):
+    ticks_per_beat = score[0]
+    max_tick = 0
+    for track in score[1:]:
+        for event in track:
+            # event structure: [name, start_tick, ...]
+            # note structure: [name, start_tick, duration, ...]
+            start = event[1]
+            duration = 0
+            if event[0] == 'note':
+                duration = event[2]
+            
+            end_tick = start + duration
+            if end_tick > max_tick:
+                max_tick = end_tick
+    
+    # Duration = (ticks / ticks_per_beat) * (microseconds_per_beat / 1,000,000)
+    # We use current_tempo as an approximation for the chunk
+    seconds = (max_tick / ticks_per_beat) * (current_tempo / 1000000.0)
+    return seconds
 
 def main():
     parser = argparse.ArgumentParser(description="Unified MIDI Generator (Generation & Completion)")
@@ -54,6 +81,10 @@ def main():
     parser.add_argument("--top_p", type=float, default=0.98)
     parser.add_argument("--top_k", type=int, default=20)
     parser.add_argument("--verbose", action="store_true")
+
+
+    parser.add_argument("--infinite", action="store_true", help="Generate and play music indefinitely")
+    parser.add_argument("--port", type=str, default=None, help="MIDI output port for infinite mode (e.g. '128:0'). Run 'aplaymidi -l' to find.")
 
     args = parser.parse_args()
 
@@ -125,7 +156,7 @@ def main():
             midi_data = f.read()
         mid_score = MIDI.midi2score(midi_data)
         mid_tokens = tokenizer.tokenize(mid_score, cc_eps=4, tempo_eps=4, 
-                                      remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
+                                    remap_track_channel=True, add_default_instr=True, remove_empty_channels=False)
         
         if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id:
             mid_tokens = mid_tokens[:-1]
@@ -248,6 +279,203 @@ def main():
         torch.cuda.manual_seed_all(seed)
     
     generator = torch.Generator(device).manual_seed(seed)
+
+
+    if args.infinite:
+        if args.output != "output.mid":
+             print("⚠️ Output file ignored in infinite mode.")
+        
+        # Check for aplaymidi
+        try:
+            subprocess.run(["aplaymidi", "-V"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except FileNotFoundError:
+            print("❌ 'aplaymidi' not found. Please install alsa-utils (e.g., 'sudo pacman -S alsa-utils').")
+            return
+
+        # Port Selection logic
+        if not args.port:
+            print("🔍 Scanning MIDI ports...")
+            result = subprocess.run(["aplaymidi", "-l"], capture_output=True, text=True)
+            print(result.stdout)
+            print("❌ Please specify a port using --port (e.g., --port 128:0)")
+            print("   (Tip: You need a MIDI synth running, like 'fluidsynth' or 'timidity -iA')")
+            return
+
+        print(f"🎵 Starting Infinite Generation on port {args.port}...")
+        print("   (Press Ctrl+C to stop)")
+        
+        # Queue for playback
+        # ‼️ Increased buffer size to 8 (was 2) to buffer ahead and avoid pauses
+        playback_queue = queue.Queue(maxsize=8)
+        
+        # ‼️ Shared state for graceful shutdown ‼️
+        stop_event = threading.Event()
+        process_lock = threading.Lock()
+        
+        # ‼️ Track active processes to clean up zombies
+        active_processes = []
+        
+        # ‼️ Track the player thread so we can start it lazily
+        player_thread = None
+
+        # Worker thread to play MIDI while model generates next chunk
+        def player_worker():
+            # ‼️ Track underrun state to avoid spamming ‼️
+            underrun_flag = False
+
+            while not stop_event.is_set():
+                # ‼️ Clean up finished processes to avoid zombies
+                for p in active_processes[:]:
+                     if p.poll() is not None:
+                          active_processes.remove(p)
+
+                try:
+                    # ‼️ Use timeout so we can check stop_event frequently ‼️
+                    # ‼️ Queue now returns (bytes, duration)
+                    item = playback_queue.get(timeout=0.1)
+                    midi_data, duration = item
+                    
+                    # ‼️ If we recovered from an underrun, notify user ‼️
+                    if underrun_flag:
+                         print(f"\n▶️ Buffer recovered. Resuming playback...    ")
+                         underrun_flag = False
+
+                except queue.Empty:
+                    # ‼️ If queue is empty, generation is lagging behind playback ‼️
+                    if not underrun_flag and not stop_event.is_set():
+                        print(f"\n⚠️ Buffer empty! Silence is due to generation lag...", end="\r")
+                        sys.stdout.flush()
+                        underrun_flag = True
+                    continue
+                
+                if midi_data is None: break
+                
+                try:
+                    # Play (Non-Blocking)
+                    # ‼️ Use Popen and write to stdin, but DO NOT wait for it immediately
+                    with process_lock:
+                        if stop_event.is_set(): break
+                        proc = subprocess.Popen(
+                            ["aplaymidi", "-p", args.port, "-"], 
+                            stdin=subprocess.PIPE
+                        )
+                        active_processes.append(proc)
+                    
+                    try:
+                        # Write data and flush/close stdin immediately
+                        # This tells aplaymidi we are done sending, but it will keep playing what it got
+                        proc.stdin.write(midi_data)
+                        proc.stdin.close()
+                    except Exception:
+                        pass 
+
+                    # ‼️ Sleep for duration minus overlap
+                    # We start the NEXT process 0.1s before this one finishes to cover startup latency
+                    overlap = 0.1
+                    sleep_time = max(0, duration - overlap)
+                    
+                    if stop_event.wait(sleep_time):
+                        break
+
+                except Exception as e:
+                    if not stop_event.is_set():
+                        print(f"Playback error: {e}")
+                finally:
+                    playback_queue.task_done()
+        
+        # ‼️ Do not start the thread immediately; wait until we buffer a couple chunks
+
+        # State tracking to ensure continuity
+        current_tempo = 500000 # Default 120bpm
+        current_patches = {} # {channel: patch}
+        
+        current_prompt = mid_np
+        chunk_size = args.num_events if args.num_events < 1000 else 256
+        chunk_count = 0
+        
+        try:
+            while True:
+                if stop_event.is_set(): break
+
+                # Prevent prompt from growing too large (keep last 2048 tokens)
+                if current_prompt.shape[1] > 2048:
+                     current_prompt = current_prompt[:, -2048:]
+                
+                gen_len = current_prompt.shape[1] + chunk_size
+                
+                print(f"🎹 Generating Chunk {chunk_count+1}...", end="\r")
+                sys.stdout.flush()
+                
+                output = model.generate(
+                    prompt=current_prompt, 
+                    batch_size=1, 
+                    max_len=gen_len,
+                    temp=args.temp, 
+                    top_p=args.top_p, 
+                    top_k=args.top_k,
+                    disable_patch_change=disable_patch_change,
+                    disable_channels=disable_channels,
+                    stop_events=chunk_size, 
+                    generator=generator
+                )
+                
+                # Extract *new* tokens for this chunk
+                new_tokens = output[0, current_prompt.shape[1]:].tolist()
+                
+                if len(new_tokens) == 0:
+                    print("\n⚠️ Model stopped generating. Reseeding...")
+                    continue
+
+                # Detokenize to get the Score
+                chunk_score = tokenizer.detokenize(new_tokens)
+                
+
+                if len(chunk_score) > 1:
+                    # Track 1 usually exists. Inject metadata at t=0
+                    chunk_score[1].insert(0, ['set_tempo', 0, current_tempo])
+                    for ch, patch in current_patches.items():
+                        chunk_score[1].insert(0, ['patch_change', 0, ch, patch])
+                
+                # Convert to MIDI bytes
+                midi_bytes = MIDI.score2midi(chunk_score)
+                
+                # ‼️ Calculate duration for smooth playback
+                chunk_duration = calculate_chunk_duration(chunk_score, current_tempo)
+
+                # Update State from this chunk (for the NEXT chunk)
+                for track in chunk_score[1:]:
+                    for event in track:
+                        if event[0] == 'set_tempo':
+                            current_tempo = event[2]
+                        elif event[0] == 'patch_change':
+                            current_patches[event[2]] = event[3]
+
+                # Enqueue for playback
+                if not stop_event.is_set():
+                    # ‼️ Push tuple (data, duration)
+                    playback_queue.put((midi_bytes, chunk_duration))
+                
+                # ‼️ Start player thread only after we have buffered 2 chunks to avoid gaps
+                if player_thread is None and playback_queue.qsize() >= 2:
+                     print("\n▶️ Buffer filled. Starting Playback...")
+                     player_thread = threading.Thread(target=player_worker, daemon=True)
+                     player_thread.start()
+                
+                # Update prompt for next iteration
+                current_prompt = output
+                chunk_count += 1
+        except KeyboardInterrupt:
+             print("\n‼️ Ctrl+C detected. Stopping playback...")
+             stop_event.set()
+             with process_lock:
+                 for p in active_processes:
+                     try:
+                         p.terminate()
+                     except: pass
+             sys.exit(0)
+            
+        return
+
 
     # Determine constraints
     stop_events = args.num_events
