@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--segment_bars", type=float, default=None, help="Number of bars for context")
     
     # Generation Constraints
-    parser.add_argument("--output", type=str, default="output.mid", help="Output filename/path")
+    parser.add_argument("--output", type=str, default=None, help="Output filename/path (If None, uses [lora]_[timestamp].mid)")
     parser.add_argument("--num_events", type=int, default=512, help="Max events to generate")
     parser.add_argument("--num_bars", type=float, default=None, help="Max bars to generate (overrides num_events)")
     parser.add_argument("--merge_output", action="store_true", help="Append generation to original input file")
@@ -88,7 +88,6 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
     if args.lora:
-
         if args.lora.lower() == "random":
             all_loras = []
             scan_roots = ["models/loras", "models", "lightning_logs"]
@@ -339,8 +338,31 @@ def main():
     os.makedirs("output", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Handle output filename
-    base_output = args.output
+    # Handle output filename ‼️
+    if args.output:
+        base_output = args.output
+    else:
+        # Determine lora name from path if available ‼️
+        if args.lora:
+            # Split the path and filter out generic names like 'lora' or 'best_lora' ‼️
+            parts = [p for p in args.lora.rstrip(os.sep).split(os.sep) if p]
+            if parts:
+                # If the last part is a generic name, climb up the directory tree ‼️
+                if parts[-1] in ["lora", "best_lora", "checkpoints"] and len(parts) > 1:
+                    # If the parent is a 'version_X', try to go one level higher ‼️
+                    if parts[-2].startswith("version_") and len(parts) > 2:
+                        lora_name = parts[-3]
+                    else:
+                        lora_name = parts[-2]
+                else:
+                    lora_name = parts[-1]
+            else:
+                lora_name = "lora"
+        else:
+            lora_name = "base"
+            
+        base_output = f"{lora_name}_{timestamp}.mid"
+
     if os.path.dirname(base_output):
         os.makedirs(os.path.dirname(base_output), exist_ok=True)
     else:
@@ -358,7 +380,7 @@ def main():
         else:
             mid_score = tokenizer.detokenize(tokens.tolist())
             
-        # Unique filename per batch
+        # Unique filename per batch ‼️
         if args.batch_size > 1:
             root, ext = os.path.splitext(base_output)
             fname = f"{root}_{i}{ext}"
