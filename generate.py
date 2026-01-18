@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--config", type=str, default="auto", help="Model config name or path")
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter")
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA")
+    parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0)")
     
     # Input Args (Dual Mode)
     parser.add_argument("--input", type=str, default=None, help="Input MIDI file. If provided, acts as completion mode.")
@@ -89,11 +90,18 @@ def main():
 
         lora_path = args.lora
         if not os.path.exists(lora_path):
-            potential_paths = [
+            potential_paths = []
+            
+
+            if args.version:
+                 potential_paths.append(os.path.join("lightning_logs", args.lora, args.version, "lora"))
+
+            potential_paths.extend([
                 os.path.join("models", "loras", args.lora),
                 os.path.join("models", args.lora),
                 os.path.join("lightning_logs", args.lora),
-            ]
+            ])
+            
             for p in potential_paths:
                 if os.path.exists(p):
                     print(f"‼️ Found LoRA at {p}")
