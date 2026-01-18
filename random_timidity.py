@@ -5,7 +5,7 @@ import random
 import subprocess
 import argparse
 
-# ‼️ FIX: Handle the missing 'audioop' module in Python 3.13+ (Common on CachyOS/Arch)
+
 try:
     import audioop
 except ImportError:
@@ -94,7 +94,7 @@ def generate_chaos_config(sf2_path, cfg_path):
     print(f"   -> Random map written to {cfg_path}")
 
 def main():
-    # ‼️ CHANGE: Added argparse to handle MIDI file and optional BPM setting
+
     parser = argparse.ArgumentParser(description="Randomize SoundFont and play MIDI with Timidity")
     parser.add_argument("midi", help="Path to the MIDI file")
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
@@ -110,7 +110,7 @@ def main():
     generate_chaos_config(sf2_file, TEMP_CFG)
 
     # 2. Build Command
-    # ‼️ CHANGE: Timidity doesn't set absolute BPM easily; it sets tempo percentage.
+
     # We use -T [percentage]. If user wants 180 BPM and MIDI is 120, we use -T 150.
     # If no BPM is provided, we don't add the flag.
     cmd = ["timidity", "-id", "-c", TEMP_CFG, midi_file]

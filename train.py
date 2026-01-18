@@ -481,7 +481,7 @@ if __name__ == '__main__':
     random.shuffle(midi_list)
     full_dataset_len = len(midi_list)
 
-    # ‼️ Added explicit check for 0 split to ensure validation is disabled by default
+
     if opt.data_val_split == 0:
         train_dataset_len = full_dataset_len
     elif full_dataset_len <= opt.data_val_split:
