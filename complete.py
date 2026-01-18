@@ -63,8 +63,16 @@ def main():
 
     # 4. Load LoRA (Optional)
     if args.lora:
-        print(f"MERGING LORA: {args.lora} (Strength: {args.lora_strength})")
-        model = model.load_merge_lora(args.lora, lora_scale=args.lora_strength)
+        # ‼️ Added robust path checking for LoRA to match cli.py behavior
+        lora_path = args.lora
+        if not os.path.exists(args.lora):
+            potential_path = os.path.join("models", "loras", args.lora)
+            if os.path.exists(potential_path):
+                print(f"Found LoRA at {potential_path}")
+                lora_path = potential_path
+        
+        print(f"MERGING LORA: {lora_path} (Strength: {args.lora_strength})")
+        model = model.load_merge_lora(lora_path, lora_scale=args.lora_strength)
 
     model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 
@@ -97,6 +105,10 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    # ‼️ Added CUDA seed setting for consistency
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
     generator = torch.Generator(device).manual_seed(seed)
 
     total_len = mid_np.shape[1] + args.num_events
@@ -109,8 +121,18 @@ def main():
     )
 
     # 7. Save Output
-    print(f"SAVING: {args.output}")
+    output_path = os.path.abspath(args.output) # ‼️ Resolve full absolute path so you know exactly where it is
+    print(f"SAVING: {output_path}")
+
+    # ‼️ Ensure directory exists
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     mid_score_out = tokenizer.detokenize(output_tokens[0].tolist())
-    with open(args.output, 'wb') as f:
+    with open(output_path, 'wb') as f:
         f.write(MIDI.score2midi(mid_score_out))
-    print("Done!")
+    print(f"Done! File saved successfully at: {output_path}") # ‼️ Final confirmation
+
+if __name__ == "__main__":
+    main()
