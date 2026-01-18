@@ -532,9 +532,16 @@ if __name__ == '__main__':
 
 
     monitor_metric = "val/loss"
+    num_sanity_val_steps = 2
+    limit_val_batches = 1.0
+    val_loader_arg = val_dataloader
+
     if len(val_dataset) == 0:
-        print("‼️ Validation set is empty. Switching checkpoint monitor to 'train/loss'.")
+        print("‼️ Validation set is empty. Switching checkpoint monitor to 'train/loss' and disabling validation.")
         monitor_metric = "train/loss"
+        num_sanity_val_steps = 0
+        limit_val_batches = 0.0
+        val_loader_arg = None
 
 
     devices_count = opt.devices
@@ -625,9 +632,12 @@ if __name__ == '__main__':
         strategy="auto",
         callbacks=callbacks,
         logger=logger,
+        num_sanity_val_steps=num_sanity_val_steps,
+        limit_val_batches=limit_val_batches,
     )
     ckpt_path = opt.resume
     if ckpt_path == "":
         ckpt_path = None
     print("---start train---")
-    trainer.fit(model, train_dataloader, val_dataloader, ckpt_path=ckpt_path)
+
+    trainer.fit(model, train_dataloader, val_loader_arg, ckpt_path=ckpt_path)
