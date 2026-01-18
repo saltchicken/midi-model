@@ -26,6 +26,7 @@ except ImportError:
 # CONFIGURATION
 SOUNDFONT_DIR = "/usr/share/soundfonts"
 TEMP_CFG = "/tmp/timidity_random.cfg"
+OUTPUT_DIR = "output" # ‼️ Added constant for the output directory
 
 def get_random_sf2(directory):
     """Finds a random .sf2 file in the system directory."""
@@ -37,6 +38,23 @@ def get_random_sf2(directory):
     selected = random.choice(sf2_files)
     print(f"🎲 Selected SoundFont: {os.path.basename(selected)}")
     return selected
+
+def get_latest_midi(directory): # ‼️ New function to find the newest MIDI file
+    """Finds the most recently created MIDI file in the specified directory."""
+    if not os.path.exists(directory):
+        return None
+    
+    # Search for common MIDI extensions
+    files = []
+    for ext in ["*.mid", "*.midi"]:
+        files.extend(glob.glob(os.path.join(directory, ext)))
+    
+    if not files:
+        return None
+    
+    # Sort files by creation time (newest first)
+    files.sort(key=os.path.getctime, reverse=True)
+    return files[0]
 
 def generate_chaos_config(sf2_path, cfg_path):
     """Parses the SF2 and creates a randomized Timidity mapping."""
@@ -96,11 +114,21 @@ def generate_chaos_config(sf2_path, cfg_path):
 def main():
 
     parser = argparse.ArgumentParser(description="Randomize SoundFont and play MIDI with Timidity")
-    parser.add_argument("midi", help="Path to the MIDI file")
+    # ‼️ Changed 'midi' to be optional (nargs="?")
+    parser.add_argument("midi", nargs="?", help="Path to the MIDI file. If omitted, plays latest from output/")
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
     args = parser.parse_args()
 
+    # ‼️ Logic to handle the automatic file selection
     midi_file = args.midi
+    if not midi_file:
+        print(f"🔍 No MIDI file specified. Searching for latest in '{OUTPUT_DIR}'...")
+        midi_file = get_latest_midi(OUTPUT_DIR)
+        if not midi_file:
+            print(f"Error: No MIDI files found in '{OUTPUT_DIR}' folder.")
+            sys.exit(1)
+        print(f"✨ Found newest: {os.path.basename(midi_file)}")
+
     if not os.path.exists(midi_file):
         print(f"Error: MIDI file not found: {midi_file}")
         sys.exit(1)
@@ -110,13 +138,9 @@ def main():
     generate_chaos_config(sf2_file, TEMP_CFG)
 
     # 2. Build Command
-
-    # We use -T [percentage]. If user wants 180 BPM and MIDI is 120, we use -T 150.
-    # If no BPM is provided, we don't add the flag.
     cmd = ["timidity", "-id", "-c", TEMP_CFG, midi_file]
     
     if args.bpm:
-        # Assuming standard MIDI base of 120 BPM for the calculation
         tempo_percent = int((args.bpm / 120) * 100)
         print(f"   -> Adjusting tempo to ~{args.bpm} BPM ({tempo_percent}%)")
         cmd.insert(1, f"-T{tempo_percent}")
