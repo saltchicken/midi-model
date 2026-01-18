@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--lora", type=str, default=None, help="Path to LoRA adapter or 'random'")
     parser.add_argument("--best_lora", action="store_true", help="Use best_lora directory if available")
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA")
-    parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0) or 'random'") # ‼️ Added 'random' support
+    parser.add_argument("--version", type=str, default=None, help="Lightning logs version (e.g. version_0) or 'random'")
     
     # Input Args (Dual Mode)
     parser.add_argument("--input", type=str, default=None, help="Input MIDI file. If provided, acts as completion mode.")
@@ -34,9 +34,9 @@ def main():
     
     # Prompt Construction Args (Used if --input is NOT provided)
     parser.add_argument("--instruments", type=str, nargs="+", help="List of instruments (e.g. 'Acoustic Grand')")
-    parser.add_argument("--bpm", type=int, default=0, help="BPM (0 for auto)")
+    parser.add_argument("--bpm", type=str, default="0", help="BPM (0 for auto, or 'random')")
     parser.add_argument("--key_sig", type=str, default="auto", choices=["auto"] + key_signatures, help="Key signature")
-    parser.add_argument("--time_sig", type=str, default="auto", help="Time signature (e.g. 4/4)")
+    parser.add_argument("--time_sig", type=str, default="auto", help="Time signature (e.g. 4/4 or 'random')")
 
     # Segmentation Args (Used if --input IS provided)
     parser.add_argument("--segment_mode", choices=["start", "end"], default="end", help="Context from start or end of input")
@@ -88,7 +88,7 @@ def main():
     model.load_state_dict(state_dict, strict=False)
 
     if args.lora:
-        # ‼️ Randomize LoRA selection
+
         if args.lora.lower() == "random":
             all_loras = []
             scan_roots = ["models/loras", "models", "lightning_logs"]
@@ -107,7 +107,7 @@ def main():
             args.lora = random.choice(all_loras)
             print(f"🎲 Randomly selected LoRA Path: {args.lora}")
 
-        # ‼️ Randomize Version selection if requested
+
         if args.version and args.version.lower() == "random":
             log_base = os.path.join("lightning_logs", os.path.basename(args.lora.rstrip(os.sep)))
             if os.path.exists(log_base):
@@ -251,7 +251,11 @@ def main():
         mid_prompt = [mid_list]
 
         if tokenizer.version == "v2":
-            # Time Sig
+
+            if args.time_sig.lower() == "random":
+                args.time_sig = random.choice(["4/4", "3/4", "2/4", "6/8", "5/4"])
+                print(f"🎲 Randomly selected Time Signature: {args.time_sig}")
+
             if args.time_sig != "auto":
                 nn, dd = args.time_sig.split('/')
                 dd_map = {2: 1, 4: 2, 8: 3}
@@ -266,9 +270,15 @@ def main():
                 key_sig_mi = idx % 2
                 mid_prompt.append(tokenizer.event2tokens(["key_signature", 0, 0, 0, key_sig_sf + 7, key_sig_mi]))
 
-        # BPM
-        if args.bpm != 0:
-            mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, args.bpm]))
+
+        if str(args.bpm).lower() == "random":
+            bpm_val = random.randint(60, 200)
+            print(f"🎲 Randomly selected BPM: {bpm_val}")
+        else:
+            bpm_val = int(args.bpm)
+
+        if bpm_val != 0:
+            mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, bpm_val]))
         elif args.instruments:
             mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, 120]))
 
