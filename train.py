@@ -133,7 +133,7 @@ class SaveBestPeftCallback(Callback):
             # Only run on global rank 0 to avoid race conditions/multiple writes
             if trainer.is_global_zero:
 
-                print(f"‼️ Best model found at Step {trainer.global_step}, Epoch {trainer.current_epoch} | val/loss: {score:.4f}")
+                print(f"‼️ Best model found at Step {trainer.global_step}, Epoch {trainer.current_epoch} | {self.monitor}: {score:.4f}")
 
                 # Check if PEFT config exists (meaning LoRA is active)
                 # pl_module might have 'peft_config' attribute if it's a PeftModel or wraps one
@@ -271,7 +271,12 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             img.save(f"{base_dir}/0_{i}.png")
             with open(f"{base_dir}/0_{i}.mid", 'wb') as f:
                 f.write(MIDI.score2midi(midi))
-        prompt = val_dataset.load_midi(random.randint(0, len(val_dataset) - 1))
+
+        if len(val_dataset) > 0:
+            prompt = val_dataset.load_midi(random.randint(0, len(val_dataset) - 1))
+        else:
+            prompt = train_dataset.load_midi(random.randint(0, len(train_dataset) - 1))
+
         prompt = np.asarray(prompt, dtype=np.int16)
         ori = prompt[:512]
         img = self.tokenizer.midi2img(self.tokenizer.detokenize(ori))
@@ -526,6 +531,12 @@ if __name__ == '__main__':
     print(f"train: {len(train_dataset)}  val: {len(val_dataset)}")
 
 
+    monitor_metric = "val/loss"
+    if len(val_dataset) == 0:
+        print("‼️ Validation set is empty. Switching checkpoint monitor to 'train/loss'.")
+        monitor_metric = "train/loss"
+
+
     devices_count = opt.devices
     if devices_count == -1:
         if opt.accelerator == "cpu":
@@ -581,16 +592,16 @@ if __name__ == '__main__':
         model.add_adapter(lora_config)
     print("---start train---")
     checkpoint_callback = ModelCheckpoint(
-        monitor="val/loss",
+        monitor=monitor_metric,
         mode="min",
         save_top_k=1,
         save_last=True,
         auto_insert_metric_name=False,
-        filename="epoch={epoch},loss={val/loss:.4f}",
+        filename="epoch={epoch},loss={" + monitor_metric + ":.4f}",
     )
     callbacks = [checkpoint_callback]
     
-    save_best_peft_callback = SaveBestPeftCallback(monitor="val/loss", mode="min")
+    save_best_peft_callback = SaveBestPeftCallback(monitor=monitor_metric, mode="min")
     callbacks.append(save_best_peft_callback)
 
     val_check_interval = opt.val_step or None
