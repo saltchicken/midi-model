@@ -481,8 +481,10 @@ if __name__ == '__main__':
     random.shuffle(midi_list)
     full_dataset_len = len(midi_list)
 
-
-    if full_dataset_len <= opt.data_val_split:
+    # ‼️ Added explicit check for 0 split to ensure validation is disabled by default
+    if opt.data_val_split == 0:
+        train_dataset_len = full_dataset_len
+    elif full_dataset_len <= opt.data_val_split:
         print(f"⚠️ Dataset size ({full_dataset_len}) is smaller than validation split ({opt.data_val_split}).")
         val_len = max(1, int(full_dataset_len * 0.1)) # Use 10% for val
         if val_len >= full_dataset_len:
