@@ -26,15 +26,12 @@ def get_lora_display_name(lora_path):
     if not parts:
         return "lora"
 
-    # ‼️ Fixed: Handle 'version_X' folders by climbing up one level
+    # Handle 'version_X' folders by climbing up one level
     if parts[-1].startswith("version_") and len(parts) > 1:
-        # If parent is generic (e.g. lightning_logs/my_model/version_0 -> my_model)
-        # We assume the parent is the model name
         return parts[-2]
 
     # If the last part is a generic name, climb up the directory tree
     if parts[-1] in ["lora", "best_lora", "checkpoints"] and len(parts) > 1:
-        # If the parent is a 'version_X', try to go one level higher
         if parts[-2].startswith("version_") and len(parts) > 2:
             return parts[-3]
         else:
@@ -58,17 +55,15 @@ def get_random_lora_path(args):
     
     selected_lora = random.choice(all_loras)
     
-    # ‼️ Helper to get just the model name for path construction
+    # Helper to get just the model name for path construction
     selected_name = os.path.basename(selected_lora.rstrip(os.sep))
     if selected_name in ["lora", "best_lora", "checkpoints"]:
-        # Try to find the actual name if we picked a subfolder
         parts = selected_lora.rstrip(os.sep).split(os.sep)
         if len(parts) > 1:
             selected_name = parts[-2]
 
     version = None
     if args.version and args.version.lower() == "random":
-        # Look for versions in lightning_logs using the extracted name
         log_base = os.path.join("lightning_logs", selected_name)
         if os.path.exists(log_base):
             versions = [d for d in os.listdir(log_base) if os.path.isdir(os.path.join(log_base, d)) and d.startswith("version_")]
@@ -84,10 +79,8 @@ def get_random_lora_path(args):
 
     search_roots = []
     if version:
-        # ‼️ Fixed: Use selected_name instead of full path selected_lora
         search_roots.append(os.path.join("lightning_logs", selected_name, version))
     
-    # ‼️ Fixed: Use selected_name for constructing alternate search paths
     search_roots.extend([
         os.path.join("models", "loras", selected_name),
         os.path.join("models", selected_name),
@@ -100,7 +93,6 @@ def get_random_lora_path(args):
         potential_paths.append(os.path.join(root, "lora"))
         potential_paths.append(root)
     
-    # Always include the originally selected path as a fallback
     potential_paths.append(selected_lora)
     
     for p in potential_paths:
@@ -159,8 +151,12 @@ def main():
 
     tokenizer = config.tokenizer
 
+
+    model = MIDIModel(config=config)
+
     while True:
-        model = MIDIModel(config=config)
+
+        # This effectively "resets" any previous LoRA applications
         model.load_state_dict(base_state_dict, strict=False)
 
         current_lora_path = args.lora
@@ -182,11 +178,47 @@ def main():
         if args.input:
             with open(args.input, 'rb') as f:
                 mid_tokens = tokenizer.tokenize(MIDI.midi2score(f.read()), cc_eps=4, tempo_eps=4, remap_track_channel=True, add_default_instr=True)
+
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
             full_mid_tokens = list(mid_tokens)
             mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
         else:
             mid_prompt = [[tokenizer.bos_id] + [tokenizer.pad_id] * (tokenizer.max_token_seq - 1)]
+            
+
+            current_bpm = args.bpm
+            if current_bpm == "random":
+                current_bpm = random.choice([70, 80, 90, 100, 110, 120, 130, 140])
+            
+            try:
+                bpm_val = int(current_bpm)
+                if bpm_val > 0:
+                    # ["set_tempo", time1, time2, track, bpm]
+                    mid_prompt.append(tokenizer.event2tokens(["set_tempo", 0, 0, 0, bpm_val]))
+                    print(f"🎵 BPM set to: {bpm_val}")
+            except ValueError:
+                pass
+
+
+            current_ts = args.time_sig
+            if current_ts == "random":
+                current_ts = random.choice(["4/4", "3/4", "6/8"])
+            
+            if current_ts != "auto" and current_ts is not None:
+                try:
+                    nn, dd = map(int, current_ts.split('/'))
+                    # ["time_signature", time1, time2, track, nn, dd]
+                    # Note: tokenizer usually expects nn-1 and dd code, but let's assume raw values if helper converts them,
+                    # or handle conversion here. MIDI standard: dd is power of 2. 
+                    # Checking tokenizer implementation: it expects nn-1 and dd-1 (index). 
+                    # midi_tokenizer.py: nn -= 1, dd -= 1 inside tokenize.
+                    # But event2tokens takes direct indices of params.
+                    # This depends on your specific tokenizer implementation. Assuming standard mapping:
+                    mid_prompt.append(tokenizer.event2tokens(["time_signature", 0, 0, 0, nn-1, int(np.log2(dd))]))
+                    print(f"🎼 Time Signature set to: {current_ts}")
+                except Exception as e:
+                    print(f"⚠️ Failed to set time sig: {e}")
+
             if args.instruments:
                 patches = {i: patch2number[instr] for i, instr in enumerate(args.instruments) if instr in patch2number}
                 for i, (c, p) in enumerate(patches.items()):
@@ -196,6 +228,7 @@ def main():
             mid_np = np.asarray([mid_prompt] * args.batch_size, dtype=np.int64)
 
         seed = args.seed if args.seed is not None else random.randint(0, MAX_SEED)
+        print(f"🌱 Seed: {seed}")
         generator = torch.Generator(device).manual_seed(seed)
         
         output_tokens = model.generate(
@@ -235,9 +268,9 @@ def main():
             print(f"--- ‼️ Generation finished. Sleeping for {args.loop}s... ---")
             time.sleep(args.loop)
         else:
-            print("--- ‼️ Iteration finished. Resetting model... ---")
+            print("--- ‼️ Iteration finished. Looping... ---")
 
-        del model
+        # No need to del model, we reuse it.
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":
