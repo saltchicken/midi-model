@@ -56,7 +56,7 @@ def get_latest_midi(directory):
     files.sort(key=os.path.getctime, reverse=True)
     return files[0]
 
-# ‼️ Added function to get a random MIDI file
+
 def get_random_midi(directory):
     """Finds a random MIDI file in the specified directory."""
     if not os.path.exists(directory):
@@ -133,14 +133,14 @@ def main():
 
     parser.add_argument("midi", nargs="?", help="Path to the MIDI file. If omitted, plays latest from output/")
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
-    # ‼️ Added argument to choose random file instead of latest
+
     parser.add_argument("-r", "--random", action="store_true", help="Play a random MIDI file from output/ instead of the latest")
     args = parser.parse_args()
 
 
     midi_file = args.midi
     if not midi_file:
-        # ‼️ Logic to handle picking random vs latest
+
         if args.random:
             print(f"🔍 No MIDI file specified. Searching for RANDOM in '{OUTPUT_DIR}'...")
             midi_file = get_random_midi(OUTPUT_DIR)
