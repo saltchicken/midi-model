@@ -104,6 +104,40 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 
 
 
+# This replaces the logic previously inside on_save_checkpoint.
+class SaveLatestPeftCallback(Callback):
+    def on_validation_end(self, trainer, pl_module):
+        if trainer.sanity_checking:
+            return
+        
+        # Determine save directory logic (reused from SaveBestPeftCallback)
+        if len(trainer.loggers) > 0 and trainer.loggers[0].save_dir:
+            save_dir = trainer.loggers[0].save_dir
+            name = trainer.loggers[0].name
+            version = trainer.loggers[0].version
+            version = version if isinstance(version, str) else f"version_{version}"
+            save_dir = os.path.join(save_dir, str(name), version)
+        else:
+            save_dir = trainer.default_root_dir
+        
+
+        # We check _hf_peft_config_loaded to ensure we are actually training a LoRA
+        if hasattr(pl_module, "_hf_peft_config_loaded") and pl_module._hf_peft_config_loaded:
+            try:
+                # We do NOT save config to 'checkpoints' folder here to avoid creating it
+                pl_module.save_peft(os.path.join(save_dir, "lora"))
+            except Exception as e:
+                print(f"Error saving latest LoRA: {e}")
+
+
+        pl_module.gen_example_count += 1
+        if pl_module.gen_example_interval > 0 and pl_module.gen_example_count % pl_module.gen_example_interval == 0:
+            try:
+                pl_module.gen_example(save_dir)
+            except Exception as e:
+                print(f"Error generating example: {e}")
+
+
 class SaveBestPeftCallback(Callback):
     def __init__(self, monitor="val/loss", mode="min"):
         super().__init__()
@@ -303,31 +337,38 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
                        os.path.join(save_dir, "adapter_model.safetensors"),
                        metadata={"format": "pt"})
 
-    def on_save_checkpoint(self, checkpoint):
-        if self.global_step == self.last_save_step:
-            return
-        self.last_save_step = self.global_step
-        trainer = self.trainer
-        if len(trainer.loggers) > 0:
-            if trainer.loggers[0].save_dir is not None:
-                save_dir = trainer.loggers[0].save_dir
-            else:
-                save_dir = trainer.default_root_dir
-            name = trainer.loggers[0].name
-            version = trainer.loggers[0].version
-            version = version if isinstance(version, str) else f"version_{version}"
-            save_dir = os.path.join(save_dir, str(name), version)
-        else:
-            save_dir = trainer.default_root_dir
-        self.config.save_pretrained(os.path.join(save_dir, "checkpoints"))
-        if self._hf_peft_config_loaded:
-            self.save_peft(os.path.join(save_dir, "lora"))
-        self.gen_example_count += 1
-        if self.gen_example_interval>0 and self.gen_example_count % self.gen_example_interval == 0:
-            try:
-                self.gen_example(save_dir)
-            except Exception as e:
-                print(e)
+
+    # We disable this to prevent saving config to 'checkpoints' folder.
+    # If enable_checkpointing=False in Trainer, this hook wouldn't run anyway,
+    # but commenting it out makes the intention clear and safe.
+    # def on_save_checkpoint(self, checkpoint):
+    #     if self.global_step == self.last_save_step:
+    #         return
+    #     self.last_save_step = self.global_step
+    #     trainer = self.trainer
+    #     if len(trainer.loggers) > 0:
+    #         if trainer.loggers[0].save_dir is not None:
+    #             save_dir = trainer.loggers[0].save_dir
+    #         else:
+    #             save_dir = trainer.default_root_dir
+    #         name = trainer.loggers[0].name
+    #         version = trainer.loggers[0].version
+    #         version = version if isinstance(version, str) else f"version_{version}"
+    #         save_dir = os.path.join(save_dir, str(name), version)
+    #     else:
+    #         save_dir = trainer.default_root_dir
+    #
+
+    #     # self.config.save_pretrained(os.path.join(save_dir, "checkpoints"))
+    #
+    #     if self._hf_peft_config_loaded:
+    #         self.save_peft(os.path.join(save_dir, "lora"))
+    #     self.gen_example_count += 1
+    #     if self.gen_example_interval>0 and self.gen_example_count % self.gen_example_interval == 0:
+    #         try:
+    #             self.gen_example(save_dir)
+    #         except Exception as e:
+    #             print(e)
 
 
 def get_midi_list(path):
@@ -600,18 +641,25 @@ if __name__ == '__main__':
         )
         model.add_adapter(lora_config)
     print("---start train---")
-    checkpoint_callback = ModelCheckpoint(
-        monitor=monitor_metric,
-        mode="min",
-        save_top_k=1,
-        save_last=True,
-        auto_insert_metric_name=False,
-        filename="epoch={epoch},loss={" + monitor_metric + ":.4f}",
-    )
-    callbacks = [checkpoint_callback]
+    
+
+    # checkpoint_callback = ModelCheckpoint(
+    #     monitor=monitor_metric,
+    #     mode="min",
+    #     save_top_k=1,
+    #     save_last=True,
+    #     auto_insert_metric_name=False,
+    #     filename="epoch={epoch},loss={" + monitor_metric + ":.4f}",
+    # )
+    # callbacks = [checkpoint_callback]
+    
+    callbacks = []
     
     save_best_peft_callback = SaveBestPeftCallback(monitor=monitor_metric, mode="min")
     callbacks.append(save_best_peft_callback)
+    
+
+    callbacks.append(SaveLatestPeftCallback())
 
     val_check_interval = opt.val_step or None
     if val_check_interval is not None:
@@ -621,6 +669,7 @@ if __name__ == '__main__':
     logger = TensorBoardLogger("lightning_logs", name=opt.name)
 
     trainer = Trainer(
+        enable_checkpointing=False,
         precision=opt.precision,
         accumulate_grad_batches=opt.acc_grad,
         gradient_clip_val=opt.grad_clip,
