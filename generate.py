@@ -3,6 +3,7 @@ import os
 import random
 import time 
 from datetime import datetime
+import json
 import numpy as np
 import torch
 from safetensors.torch import load_file as safe_load_file
@@ -186,6 +187,22 @@ def main():
 
         if current_lora_path:
             print(f"Merging LoRA: {current_lora_path}")
+
+
+            meta_path = None
+            if os.path.isdir(current_lora_path):
+                meta_path = os.path.join(current_lora_path, "metadata.json")
+            elif current_lora_path.endswith(".safetensors"):
+                meta_path = os.path.join(os.path.dirname(current_lora_path), "metadata.json")
+            
+            if meta_path and os.path.exists(meta_path):
+                try:
+                    with open(meta_path, 'r') as f:
+                        meta = json.load(f)
+                        print(f"   ℹ️ Best LoRA found at Epoch {meta.get('epoch', '?')}, Step {meta.get('step', '?')} (Loss: {meta.get('value', '?')})")
+                except Exception as e:
+                    pass
+
             try:
                 model = model.load_merge_lora(current_lora_path, lora_scale=args.lora_strength)
             except Exception as e:

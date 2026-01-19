@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import json
 from pathlib import Path
 
 import lightning as pl
@@ -9,7 +10,7 @@ import torch
 import torch.nn.functional as F
 from lightning import Trainer
 from lightning.fabric.utilities import rank_zero_only
-from lightning.pytorch.callbacks import ModelCheckpoint, Callback
+from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.loggers import TensorBoardLogger
 from peft import LoraConfig, TaskType
 from safetensors.torch import save_file as safe_save_file, load_file as safe_load_file
@@ -192,6 +193,18 @@ class SaveBestPeftCallback(Callback):
                     
                     try:
                         pl_module.save_peft(best_path)
+
+
+                        metadata = {
+                            "step": trainer.global_step,
+                            "epoch": trainer.current_epoch,
+                            "monitor": self.monitor,
+                            "value": score
+                        }
+                        with open(os.path.join(best_path, "metadata.json"), "w") as f:
+                            json.dump(metadata, f, indent=4)
+                        print(f"‼️ Saved metadata to {best_path}/metadata.json")
+
                     except Exception as e:
                         print(f"Error saving best LoRA: {e}")
 
@@ -275,8 +288,8 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             reduction="mean",
             ignore_index=self.tokenizer.pad_id
         )
-        self.log("train/loss", loss)
-        self.log("train/lr", self.lr_schedulers().get_last_lr()[0])
+        self.log("train/loss", loss, prog_bar=True)
+        self.log("train/lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -294,7 +307,7 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             ignore_index=self.tokenizer.pad_id
         )
         acc = self.compute_accuracy(logits, y)
-        self.log_dict({"val/loss": loss, "val/acc": acc}, sync_dist=True)
+        self.log_dict({"val/loss": loss, "val/acc": acc}, sync_dist=True, prog_bar=True)
         return loss
 
     @rank_zero_only
@@ -362,7 +375,6 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
     #     else:
     #         save_dir = trainer.default_root_dir
     #
-
     #     # self.config.save_pretrained(os.path.join(save_dir, "checkpoints"))
     #
     #     if self._hf_peft_config_loaded:
@@ -494,7 +506,7 @@ if __name__ == '__main__':
         "--lora-rank", type=int, default=64, help="lora rank"
     )
     parser.add_argument(
-        "--lora-alpha", type=int, default=128, help="lora alpha"
+        "--lora-alpha", type=int, default=None, help="lora alpha"
     )
 
     parser.add_argument(
@@ -502,6 +514,12 @@ if __name__ == '__main__':
     )
 
     opt = parser.parse_args()
+
+
+    if opt.lora_alpha is None:
+        opt.lora_alpha = opt.lora_rank * 2
+        print(f"‼️ --lora-alpha was left at None, so it is being set to {opt.lora_alpha} (rank * 2)")
+
     print(opt)
 
     torch.set_float32_matmul_precision('medium')
