@@ -26,7 +26,7 @@ except ImportError:
 # CONFIGURATION
 SOUNDFONT_DIR = "/usr/share/soundfonts"
 TEMP_CFG = "/tmp/timidity_random.cfg"
-OUTPUT_DIR = "output" # ‼️ Added constant for the output directory
+OUTPUT_DIR = "output"
 
 def get_random_sf2(directory):
     """Finds a random .sf2 file in the system directory."""
@@ -39,7 +39,7 @@ def get_random_sf2(directory):
     print(f"🎲 Selected SoundFont: {os.path.basename(selected)}")
     return selected
 
-def get_latest_midi(directory): # ‼️ New function to find the newest MIDI file
+def get_latest_midi(directory):
     """Finds the most recently created MIDI file in the specified directory."""
     if not os.path.exists(directory):
         return None
@@ -114,12 +114,12 @@ def generate_chaos_config(sf2_path, cfg_path):
 def main():
 
     parser = argparse.ArgumentParser(description="Randomize SoundFont and play MIDI with Timidity")
-    # ‼️ Changed 'midi' to be optional (nargs="?")
+
     parser.add_argument("midi", nargs="?", help="Path to the MIDI file. If omitted, plays latest from output/")
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
     args = parser.parse_args()
 
-    # ‼️ Logic to handle the automatic file selection
+
     midi_file = args.midi
     if not midi_file:
         print(f"🔍 No MIDI file specified. Searching for latest in '{OUTPUT_DIR}'...")
