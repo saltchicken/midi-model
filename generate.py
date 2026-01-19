@@ -39,31 +39,42 @@ def get_lora_display_name(lora_path):
     
     return parts[-1]
 
-def get_random_lora_path(args):
-    all_loras = []
-    scan_roots = ["models/loras", "models", "lightning_logs"]
-    
-    for root_dir in scan_roots:
-        if not os.path.exists(root_dir):
-            continue
-        for root, dirs, files in os.walk(root_dir):
-            if "adapter_config.json" in files:
-                all_loras.append(root)
-    
-    if not all_loras:
+
+def resolve_lora_path(args):
+    if not args.lora:
         return None
+
+    selected_lora = args.lora
+
+
+    if args.lora.lower() == "random":
+        all_loras = []
+        scan_roots = ["models/loras", "models", "lightning_logs"]
+        
+        for root_dir in scan_roots:
+            if not os.path.exists(root_dir):
+                continue
+            for root, dirs, files in os.walk(root_dir):
+                if "adapter_config.json" in files:
+                    all_loras.append(root)
+        
+        if not all_loras:
+            return None
+        
+        selected_lora = random.choice(all_loras)
     
-    selected_lora = random.choice(all_loras)
-    
-    # Helper to get just the model name for path construction
+
+    # This now runs for both "random" and specific inputs like "super-mario-rpg"
     selected_name = os.path.basename(selected_lora.rstrip(os.sep))
     if selected_name in ["lora", "best_lora", "checkpoints"]:
         parts = selected_lora.rstrip(os.sep).split(os.sep)
         if len(parts) > 1:
             selected_name = parts[-2]
 
-    version = None
-    if args.version and args.version.lower() == "random":
+    version = args.version
+    
+
+    if version and version.lower() == "random":
         log_base = os.path.join("lightning_logs", selected_name)
         if os.path.exists(log_base):
             versions = [d for d in os.listdir(log_base) if os.path.isdir(os.path.join(log_base, d)) and d.startswith("version_")]
@@ -71,14 +82,10 @@ def get_random_lora_path(args):
                 version = random.choice(versions)
     
     potential_paths = []
-    if args.best_lora:
-        if selected_lora.rstrip(os.sep).endswith("lora"):
-            parent = os.path.dirname(selected_lora.rstrip(os.sep))
-            potential_paths.append(os.path.join(parent, "best_lora"))
-        potential_paths.append(os.path.join(selected_lora, "best_lora"))
+    
 
     search_roots = []
-    if version:
+    if version and version != "random":
         search_roots.append(os.path.join("lightning_logs", selected_name, version))
     
     search_roots.extend([
@@ -87,17 +94,27 @@ def get_random_lora_path(args):
         os.path.join("lightning_logs", selected_name),
     ])
 
+
     for root in search_roots:
         if args.best_lora:
             potential_paths.append(os.path.join(root, "best_lora"))
         potential_paths.append(os.path.join(root, "lora"))
         potential_paths.append(root)
     
+
+    if args.best_lora:
+        if selected_lora.rstrip(os.sep).endswith("lora"):
+            parent = os.path.dirname(selected_lora.rstrip(os.sep))
+            potential_paths.append(os.path.join(parent, "best_lora"))
+        potential_paths.append(os.path.join(selected_lora, "best_lora"))
+    
     potential_paths.append(selected_lora)
     
     for p in potential_paths:
         if os.path.exists(p) and (os.path.isdir(p) or p.endswith(".safetensors")):
             return p
+            
+    # If nothing resolved, return the original input so error handling can catch it later
     return selected_lora
 
 def main():
@@ -159,14 +176,20 @@ def main():
         # This effectively "resets" any previous LoRA applications
         model.load_state_dict(base_state_dict, strict=False)
 
-        current_lora_path = args.lora
+
+        current_lora_path = resolve_lora_path(args)
+        
         if args.lora and args.lora.lower() == "random":
-            current_lora_path = get_random_lora_path(args)
-            print(f"🎲 Selected LoRA: {current_lora_path}")
+             print(f"🎲 Selected Random LoRA: {current_lora_path}")
+        elif current_lora_path and current_lora_path != args.lora:
+             print(f"✅ Resolved LoRA: {current_lora_path}")
 
         if current_lora_path:
             print(f"Merging LoRA: {current_lora_path}")
-            model = model.load_merge_lora(current_lora_path, lora_scale=args.lora_strength)
+            try:
+                model = model.load_merge_lora(current_lora_path, lora_scale=args.lora_strength)
+            except Exception as e:
+                print(f"⚠️ Failed to merge LoRA: {e}")
 
         model.to(device, dtype=torch.bfloat16 if device == "cuda" else torch.float32).eval()
 
@@ -208,12 +231,6 @@ def main():
                 try:
                     nn, dd = map(int, current_ts.split('/'))
                     # ["time_signature", time1, time2, track, nn, dd]
-                    # Note: tokenizer usually expects nn-1 and dd code, but let's assume raw values if helper converts them,
-                    # or handle conversion here. MIDI standard: dd is power of 2. 
-                    # Checking tokenizer implementation: it expects nn-1 and dd-1 (index). 
-                    # midi_tokenizer.py: nn -= 1, dd -= 1 inside tokenize.
-                    # But event2tokens takes direct indices of params.
-                    # This depends on your specific tokenizer implementation. Assuming standard mapping:
                     mid_prompt.append(tokenizer.event2tokens(["time_signature", 0, 0, 0, nn-1, int(np.log2(dd))]))
                     print(f"🎼 Time Signature set to: {current_ts}")
                 except Exception as e:
