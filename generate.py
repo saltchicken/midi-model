@@ -139,6 +139,9 @@ def main():
 
     # Input Args
     parser.add_argument("--input", type=str, default=None)
+    # ‼️ Added input_bars argument to specify how many bars of the input to keep
+    parser.add_argument("--input_bars", type=float, default=None, help="Amount of bars to take from the beginning of the input")
+
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--instruments", type=str, nargs="+")
     parser.add_argument("--bpm", type=str, default="0")
@@ -232,6 +235,43 @@ def main():
                 mid_tokens = tokenizer.tokenize(MIDI.midi2score(f.read()), cc_eps=4, tempo_eps=4, remap_track_channel=True, add_default_instr=True)
 
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
+            
+            # ‼️ Logic to truncate input to a specific number of bars
+            if args.input_bars is not None:
+                # Assuming 4/4 time signature (4 beats per bar)
+                target_beats = args.input_bars * 4
+                accumulated_beats = 0
+                cut_idx = len(mid_tokens)
+                
+                # Get ID for time1=0
+                time1_base = tokenizer.parameter_ids["time1"][0]
+
+                for i, event_tokens in enumerate(mid_tokens):
+                    # Skip BOS token
+                    if event_tokens[0] == tokenizer.bos_id:
+                        continue
+                    
+                    # Safety check for token length
+                    if len(event_tokens) < 2:
+                        continue
+
+                    t1_id = event_tokens[1]
+                    
+                    # Check if it's a valid time1 parameter ID
+                    # If it's something else (like pad_id), skip it
+                    if t1_id < time1_base:
+                        continue
+                        
+                    t1_val = t1_id - time1_base
+                    accumulated_beats += t1_val
+
+                    if accumulated_beats >= target_beats:
+                        cut_idx = i
+                        print(f"‼️ Truncating input at {args.input_bars} bars (stopped at event {i}, beat ~{accumulated_beats})")
+                        break
+                
+                mid_tokens = mid_tokens[:cut_idx]
+
             full_mid_tokens = list(mid_tokens)
             mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
         else:
