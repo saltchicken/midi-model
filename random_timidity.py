@@ -56,6 +56,22 @@ def get_latest_midi(directory):
     files.sort(key=os.path.getctime, reverse=True)
     return files[0]
 
+# ‼️ Added function to get a random MIDI file
+def get_random_midi(directory):
+    """Finds a random MIDI file in the specified directory."""
+    if not os.path.exists(directory):
+        return None
+    
+    # Search for common MIDI extensions
+    files = []
+    for ext in ["*.mid", "*.midi"]:
+        files.extend(glob.glob(os.path.join(directory, ext)))
+    
+    if not files:
+        return None
+    
+    return random.choice(files)
+
 def generate_chaos_config(sf2_path, cfg_path):
     """Parses the SF2 and creates a randomized Timidity mapping."""
     print("   -> Parsing SoundFont...")
@@ -117,17 +133,28 @@ def main():
 
     parser.add_argument("midi", nargs="?", help="Path to the MIDI file. If omitted, plays latest from output/")
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
+    # ‼️ Added argument to choose random file instead of latest
+    parser.add_argument("-r", "--random", action="store_true", help="Play a random MIDI file from output/ instead of the latest")
     args = parser.parse_args()
 
 
     midi_file = args.midi
     if not midi_file:
-        print(f"🔍 No MIDI file specified. Searching for latest in '{OUTPUT_DIR}'...")
-        midi_file = get_latest_midi(OUTPUT_DIR)
-        if not midi_file:
-            print(f"Error: No MIDI files found in '{OUTPUT_DIR}' folder.")
-            sys.exit(1)
-        print(f"✨ Found newest: {os.path.basename(midi_file)}")
+        # ‼️ Logic to handle picking random vs latest
+        if args.random:
+            print(f"🔍 No MIDI file specified. Searching for RANDOM in '{OUTPUT_DIR}'...")
+            midi_file = get_random_midi(OUTPUT_DIR)
+            if not midi_file:
+                print(f"Error: No MIDI files found in '{OUTPUT_DIR}' folder.")
+                sys.exit(1)
+            print(f"✨ Found random: {os.path.basename(midi_file)}")
+        else:
+            print(f"🔍 No MIDI file specified. Searching for latest in '{OUTPUT_DIR}'...")
+            midi_file = get_latest_midi(OUTPUT_DIR)
+            if not midi_file:
+                print(f"Error: No MIDI files found in '{OUTPUT_DIR}' folder.")
+                sys.exit(1)
+            print(f"✨ Found newest: {os.path.basename(midi_file)}")
 
     if not os.path.exists(midi_file):
         print(f"Error: MIDI file not found: {midi_file}")

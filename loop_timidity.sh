@@ -1,6 +1,7 @@
 while true; do
   echo "Starting new playback session"
-  python random_timidity.py
+  # ‼️ Changed to pass command line arguments (like --random) to the python script
+  python random_timidity.py "$@"
 
   # ‼️ Brief pause to allow the user to break the loop with Ctrl+C
   # and to prevent high CPU usage if the script crashes repeatedly
