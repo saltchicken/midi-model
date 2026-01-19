@@ -146,6 +146,10 @@ class SaveBestPeftCallback(Callback):
         self.best_score = float('inf') if mode == "min" else float('-inf')
 
     def on_validation_end(self, trainer, pl_module):
+
+        if trainer.sanity_checking:
+            return
+
         logs = trainer.callback_metrics
         if self.monitor not in logs:
             return
