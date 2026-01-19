@@ -108,7 +108,7 @@ def generate_chaos_config(sf2_path, cfg_path):
     
     cfg_lines = [f"dir {os.path.dirname(sf2_path)}"]
 
-    # ‼️ FIX: Use basename only. Timidity prepends the 'dir' path to filenames.
+
     # Providing the full path here causes /path/to/dir//path/to/dir/file.sf2 errors.
     sf2_name = os.path.basename(sf2_path)
 
@@ -116,7 +116,7 @@ def generate_chaos_config(sf2_path, cfg_path):
     cfg_lines.append("bank 0")
     for midi_program in range(128):
         target_bank, target_preset, target_name = random.choice(valid_mappings)
-        # ‼️ FIX: Use sf2_name instead of sf2_path
+
         line = f"{midi_program} %font \"{sf2_name}\" {target_bank} {target_preset}"
         cfg_lines.append(line)
 
@@ -124,7 +124,7 @@ def generate_chaos_config(sf2_path, cfg_path):
     cfg_lines.append("drumset 0")
     for midi_program in range(128):
         target_bank, target_preset, target_name = random.choice(valid_mappings)
-        # ‼️ FIX: Use sf2_name instead of sf2_path
+
         line = f"{midi_program} %font \"{sf2_name}\" {target_bank} {target_preset}"
         cfg_lines.append(line)
 
@@ -174,7 +174,7 @@ def main():
     cmd = ["timidity", "-id", "-c", TEMP_CFG, midi_file]
     
     if args.bpm:
-        # ‼️ FIX: Timidity -T takes percentage (100 = original speed).
+
         # We can't know the original BPM, so we assume 120 is "Standard".
         tempo_percent = int((args.bpm / 120) * 100)
         print(f"   -> Adjusting tempo scale: {tempo_percent}% (Assuming ~120 source)")
