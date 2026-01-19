@@ -70,9 +70,6 @@ class MidiDataset(Dataset):
     def __getitem__(self, index):
         mid = self.load_midi(index)
         mid = np.asarray(mid, dtype=np.int16)
-        # if mid.shape[0] < self.max_len:
-        #     mid = np.pad(mid, ((0, self.max_len - mid.shape[0]), (0, 0)),
-        #                  mode="constant", constant_values=self.tokenizer.pad_id)
         if self.rand_start:
             start_idx = random.randrange(0, max(1, mid.shape[0] - self.max_len))
             start_idx = random.choice([0, start_idx])
@@ -92,10 +89,6 @@ class MidiDataset(Dataset):
 
 
 def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
-    """ Create a schedule with a learning rate that decreases linearly after
-    linearly increasing during a warmup period.
-    """
-
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
@@ -105,108 +98,49 @@ def get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
 
 
 
-# This replaces the logic previously inside on_save_checkpoint.
-class SaveLatestPeftCallback(Callback):
-    def on_validation_end(self, trainer, pl_module):
-        if trainer.sanity_checking:
-            return
-        
-        # Determine save directory logic (reused from SaveBestPeftCallback)
-        if len(trainer.loggers) > 0 and trainer.loggers[0].save_dir:
-            save_dir = trainer.loggers[0].save_dir
-            name = trainer.loggers[0].name
-            version = trainer.loggers[0].version
-            version = version if isinstance(version, str) else f"version_{version}"
-            save_dir = os.path.join(save_dir, str(name), version)
-        else:
-            save_dir = trainer.default_root_dir
-        
+class SaveIntervalPeftCallback(Callback):
+    def __init__(self, interval=50):
+        self.interval = interval
+        self.last_save_step = -1 
 
-        # We check _hf_peft_config_loaded to ensure we are actually training a LoRA
-        if hasattr(pl_module, "_hf_peft_config_loaded") and pl_module._hf_peft_config_loaded:
-            try:
-                # We do NOT save config to 'checkpoints' folder here to avoid creating it
-                pl_module.save_peft(os.path.join(save_dir, "lora"))
-            except Exception as e:
-                print(f"Error saving latest LoRA: {e}")
-
-
-        pl_module.gen_example_count += 1
-        if pl_module.gen_example_interval > 0 and pl_module.gen_example_count % pl_module.gen_example_interval == 0:
-            try:
-                pl_module.gen_example(save_dir)
-            except Exception as e:
-                print(f"Error generating example: {e}")
-
-
-class SaveBestPeftCallback(Callback):
-    def __init__(self, monitor="val/loss", mode="min"):
-        super().__init__()
-        self.monitor = monitor
-        self.mode = mode
-        self.best_score = float('inf') if mode == "min" else float('-inf')
-
-    def on_validation_end(self, trainer, pl_module):
-
-        if trainer.sanity_checking:
-            return
-
-        logs = trainer.callback_metrics
-        if self.monitor not in logs:
-            return
-        
-        score = logs[self.monitor]
-        if isinstance(score, torch.Tensor):
-            score = score.item()
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if self.interval > 0 and trainer.global_step > 0 and trainer.global_step % self.interval == 0:
             
-        is_best = False
-        if self.mode == "min":
-            if score < self.best_score:
-                is_best = True
-        else:
-            if score > self.best_score:
-                is_best = True
+            if self.last_save_step == trainer.global_step:
+                return
+            self.last_save_step = trainer.global_step
 
-        if is_best:
-            self.best_score = score
-            # Only run on global rank 0 to avoid race conditions/multiple writes
-            if trainer.is_global_zero:
-
-                print(f"‼️ Best model found at Step {trainer.global_step}, Epoch {trainer.current_epoch} | {self.monitor}: {score:.4f}")
-
-                # Check if PEFT config exists (meaning LoRA is active)
-                # pl_module might have 'peft_config' attribute if it's a PeftModel or wraps one
-                if hasattr(pl_module, "peft_config") and pl_module.peft_config:
-                    
-                    # Determine save directory
-                    if len(trainer.loggers) > 0 and trainer.loggers[0].save_dir:
-                         save_dir = trainer.loggers[0].save_dir
-                         name = trainer.loggers[0].name
-                         version = trainer.loggers[0].version
-                         version = version if isinstance(version, str) else f"version_{version}"
-                         save_dir = os.path.join(save_dir, str(name), version)
-                    else:
-                         save_dir = trainer.default_root_dir
-                    
-                    best_path = os.path.join(save_dir, "best_lora")
-                    print(f"‼️ Saving Best LoRA to {best_path}")
-                    
+            if hasattr(pl_module, "_hf_peft_config_loaded") and pl_module._hf_peft_config_loaded:
+                # Determine save directory
+                if len(trainer.loggers) > 0 and trainer.loggers[0].save_dir:
+                    save_dir = trainer.loggers[0].save_dir
+                    name = trainer.loggers[0].name
+                    version = trainer.loggers[0].version
+                    version = version if isinstance(version, str) else f"version_{version}"
+                    save_dir = os.path.join(save_dir, str(name), version)
+                else:
+                    save_dir = trainer.default_root_dir
+                
+                ckpt_dir = os.path.join(save_dir, f"checkpoint-{trainer.global_step}")
+                latest_dir = os.path.join(save_dir, "lora")
+                
+                if trainer.is_global_zero:
                     try:
-                        pl_module.save_peft(best_path)
+                        # 1. Save Numbered Checkpoint
+                        print(f"‼️ Saving Interval LoRA to {ckpt_dir}")
+                        pl_module.save_peft(ckpt_dir)
 
+                        # 2. Save 'Latest' Checkpoint (for ease of use)
+                        pl_module.save_peft(latest_dir)
 
-                        metadata = {
-                            "step": trainer.global_step,
-                            "epoch": trainer.current_epoch,
-                            "monitor": self.monitor,
-                            "value": score
-                        }
-                        with open(os.path.join(best_path, "metadata.json"), "w") as f:
-                            json.dump(metadata, f, indent=4)
-                        print(f"‼️ Saved metadata to {best_path}/metadata.json")
+                        # 3. Generate Examples
+                        print(f"‼️ Generating examples for step {trainer.global_step}")
+                        pl_module.gen_example(save_dir)
 
                     except Exception as e:
-                        print(f"Error saving best LoRA: {e}")
+                        print(f"Error during interval save/generation: {e}")
+
+
 
 class TrainMIDIModel(MIDIModel, pl.LightningModule):
     def __init__(self, config: MIDIModelConfig,
@@ -221,7 +155,7 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
         self.gen_example_interval = gen_example_interval
         self.example_batch = example_batch
         self.last_save_step = 0
-        self.gen_example_count = 0
+
 
     def configure_optimizers(self):
         param_optimizer = list(self.named_parameters())
@@ -254,22 +188,7 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
                 "frequency": 1
             }
         }
-
-    def compute_accuracy(self, logits, labels):
-        out = torch.argmax(logits, dim=-1)
-        out = out.flatten()
-        labels = labels.flatten()
-
-        mask = (labels != self.tokenizer.pad_id)
-        out = out[mask]
-        labels = labels[mask]
-
-        num_right = (out == labels)
-        num_right = torch.sum(num_right).type(torch.float32)
-        acc = num_right / len(labels)
-
-        return acc
-
+    
     def training_step(self, batch, batch_idx):
         x = batch[:, :-1].contiguous()  # (batch_size, midi_sequence_length, token_sequence_length)
         y = batch[:, 1:].contiguous()
@@ -292,24 +211,6 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
         self.log("train/lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
-        x = batch[:, :-1].contiguous()  # (batch_size, midi_sequence_length, token_sequence_length)
-        y = batch[:, 1:].contiguous()
-        hidden = self.forward(x)
-        hidden = hidden.reshape(-1, hidden.shape[-1])
-        y = y.reshape(-1, y.shape[-1])  # (batch_size*midi_sequence_length, token_sequence_length)
-        x = y[:, :-1]
-        logits = self.forward_token(hidden, x)
-        loss = F.cross_entropy(
-            logits.view(-1, self.tokenizer.vocab_size),
-            y.view(-1),
-            reduction="mean",
-            ignore_index=self.tokenizer.pad_id
-        )
-        acc = self.compute_accuracy(logits, y)
-        self.log_dict({"val/loss": loss, "val/acc": acc}, sync_dist=True, prog_bar=True)
-        return loss
-
     @rank_zero_only
     def gen_example(self, save_dir):
         base_dir = f"{save_dir}/sample/{self.global_step}"
@@ -323,10 +224,8 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
             with open(f"{base_dir}/0_{i}.mid", 'wb') as f:
                 f.write(MIDI.score2midi(midi))
 
-        if len(val_dataset) > 0:
-            prompt = val_dataset.load_midi(random.randint(0, len(val_dataset) - 1))
-        else:
-            prompt = train_dataset.load_midi(random.randint(0, len(train_dataset) - 1))
+        # Using train_dataset since validation is disabled
+        prompt = train_dataset.load_midi(random.randint(0, len(train_dataset) - 1))
 
         prompt = np.asarray(prompt, dtype=np.int16)
         ori = prompt[:512]
@@ -355,38 +254,6 @@ class TrainMIDIModel(MIDIModel, pl.LightningModule):
                        metadata={"format": "pt"})
 
 
-    # We disable this to prevent saving config to 'checkpoints' folder.
-    # If enable_checkpointing=False in Trainer, this hook wouldn't run anyway,
-    # but commenting it out makes the intention clear and safe.
-    # def on_save_checkpoint(self, checkpoint):
-    #     if self.global_step == self.last_save_step:
-    #         return
-    #     self.last_save_step = self.global_step
-    #     trainer = self.trainer
-    #     if len(trainer.loggers) > 0:
-    #         if trainer.loggers[0].save_dir is not None:
-    #             save_dir = trainer.loggers[0].save_dir
-    #         else:
-    #             save_dir = trainer.default_root_dir
-    #         name = trainer.loggers[0].name
-    #         version = trainer.loggers[0].version
-    #         version = version if isinstance(version, str) else f"version_{version}"
-    #         save_dir = os.path.join(save_dir, str(name), version)
-    #     else:
-    #         save_dir = trainer.default_root_dir
-    #
-    #     # self.config.save_pretrained(os.path.join(save_dir, "checkpoints"))
-    #
-    #     if self._hf_peft_config_loaded:
-    #         self.save_peft(os.path.join(save_dir, "lora"))
-    #     self.gen_example_count += 1
-    #     if self.gen_example_interval>0 and self.gen_example_count % self.gen_example_interval == 0:
-    #         try:
-    #             self.gen_example(save_dir)
-    #         except Exception as e:
-    #             print(e)
-
-
 def get_midi_list(path):
     all_files = {
         os.path.join(root, fname)
@@ -402,41 +269,16 @@ def get_midi_list(path):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     # model args
-    parser.add_argument(
-        "--resume", type=str, default="", help="resume training from ckpt"
-    )
-    parser.add_argument(
-        "--ckpt", type=str, default="", help="load ckpt"
-    )
-    parser.add_argument(
-        "--config", type=str, default="tv2o-medium", help="model config name or file"
-    )
-    parser.add_argument(
-        "--task", type=str, default="train", choices=["train", "lora"], help="Full train or lora"
-    )
+    parser.add_argument("--resume", type=str, default="", help="resume training from ckpt")
+    parser.add_argument("--ckpt", type=str, default="", help="load ckpt")
+    parser.add_argument("--config", type=str, default="tv2o-medium", help="model config name or file")
+    parser.add_argument("--task", type=str, default="train", choices=["train", "lora"], help="Full train or lora")
 
     # dataset args
-    parser.add_argument(
-        "--data", type=str, default="data", help="dataset path"
-    )
-    parser.add_argument(
-        "--data-val-split",
-        type=int,
-        default=0,
-        help="the number of midi files divided into the validation set",
-    )
-    parser.add_argument(
-        "--max-len",
-        type=int,
-        default=2048,
-        help="max seq length for training",
-    )
-    parser.add_argument(
-        "--quality", action="store_true", default=False, help="check dataset quality"
-    )
-    parser.add_argument(
-        "--no-aug", action="store_true", default=False, help="disable data augmentation" 
-    ) 
+    parser.add_argument("--data", type=str, default="data", help="dataset path")
+    parser.add_argument("--max-len", type=int, default=2048, help="max seq length for training")
+    parser.add_argument("--quality", action="store_true", default=False, help="check dataset quality")
+    parser.add_argument("--no-aug", action="store_true", default=False, help="disable data augmentation") 
 
     # training args
     parser.add_argument("--seed", type=int, default=0, help="seed")
@@ -445,76 +287,35 @@ if __name__ == '__main__':
     parser.add_argument("--warmup-step", type=int, default=1e2, help="warmup step")
     parser.add_argument("--max-step", type=int, default=1e6, help="max training step")
     parser.add_argument("--grad-clip", type=float, default=1.0, help="gradient clip val")
-    parser.add_argument(
-        "--sample-seq", action="store_true", default=False, help="sample midi seq to reduce vram"
-    )
-    parser.add_argument(
-        "--gen-example-interval", type=int, default=1, help="generate example interval. set 0 to disable"
-    )
-    parser.add_argument(
-        "--batch-size-train", type=int, default=2, help="batch size for training"
-    )
-    parser.add_argument(
-        "--batch-size-val", type=int, default=2, help="batch size for val"
-    )
-    parser.add_argument(
-        "--batch-size-gen-example", type=int, default=8, help="batch size for generate example"
-    )
-    parser.add_argument(
-        "--workers-train",
-        type=int,
-        default=4,
-        help="workers num for training dataloader",
-    )
-    parser.add_argument(
-        "--workers-val",
-        type=int,
-        default=4,
-        help="workers num for validation dataloader",
-    )
-    parser.add_argument(
-        "--acc-grad", type=int, default=2, help="gradient accumulation"
-    )
-    parser.add_argument(
-        "--accelerator",
-        type=str,
-        default="gpu",
-        choices=["cpu", "gpu", "tpu", "ipu", "hpu", "auto"],
-        help="accelerator",
-    )
-    parser.add_argument(
-        "--precision",
-        type=str,
-        default="bf16-true",
-        choices=["16-true", "16-mixed", "bf16-true", "bf16-mixed", "32-true", "64-true", "64", "32", "16", "bf16"],
-        help="precision",
-    )
+    parser.add_argument("--sample-seq", action="store_true", default=False, help="sample midi seq to reduce vram")
+
+    parser.add_argument("--gen-example-interval", type=int, default=0, help="DEPRECATED: Now controlled by --save-interval")
+    parser.add_argument("--save-interval", type=int, default=50, help="Save LoRA checkpoint AND generate examples every N steps")
+    parser.add_argument("--batch-size-train", type=int, default=1, help="batch size for training")
+    parser.add_argument("--batch-size-gen-example", type=int, default=8, help="batch size for generate example")
+    parser.add_argument("--workers-train", type=int, default=4, help="workers num for training dataloader")
+    parser.add_argument("--acc-grad", type=int, default=2, help="gradient accumulation")
+    parser.add_argument("--accelerator", type=str, default="gpu", choices=["cpu", "gpu", "tpu", "ipu", "hpu", "auto"], help="accelerator")
+    parser.add_argument("--precision", type=str, default="bf16-true", help="precision")
     parser.add_argument("--devices", type=int, default=-1, help="devices num")
     parser.add_argument("--nodes", type=int, default=1, help="nodes num")
-    parser.add_argument(
-        "--disable-benchmark", action="store_true", default=False, help="disable cudnn benchmark"
-    )
-    parser.add_argument(
-        "--log-step", type=int, default=1, help="log training loss every n steps"
-    )
-    parser.add_argument(
-        "--val-step", type=int, default=1600, help="valid and save every n steps, set 0 to valid and save every epoch"
-    )
+    parser.add_argument("--disable-benchmark", action="store_true", default=False, help="disable cudnn benchmark")
+    parser.add_argument("--log-step", type=int, default=1, help="log training loss every n steps")
+    parser.add_argument("--lora-rank", type=int, default=64, help="lora rank")
+    parser.add_argument("--lora-alpha", type=int, default=None, help="lora alpha")
 
-
-    parser.add_argument(
-        "--lora-rank", type=int, default=64, help="lora rank"
-    )
-    parser.add_argument(
-        "--lora-alpha", type=int, default=None, help="lora alpha"
-    )
-
-    parser.add_argument(
-        "--name", type=str, default="default", help="experiment name (output directory name)"
-    )
+    parser.add_argument("--name", type=str, default=None, help="experiment name (output directory name)")
 
     opt = parser.parse_args()
 
+
+    if opt.name is None:
+        data_name = os.path.basename(os.path.normpath(opt.data))
+        opt.name = f"{data_name}_{opt.lora_rank}"
+        print(f"‼️ No name provided. Auto-generated name: {opt.name}")
+    elif opt.name == "default":
+        # Handle case where user might explicitly pass "default" if they really wanted the old behavior, or just fallback
+        pass
 
     if opt.lora_alpha is None:
         opt.lora_alpha = opt.lora_rank * 2
@@ -529,6 +330,7 @@ if __name__ == '__main__':
     if not os.path.exists("sample"):
         os.mkdir("sample")
     pl.seed_everything(opt.seed)
+    
     print("---load dataset---")
     if opt.config in config_name_list:
         config = MIDIModelConfig.from_name(opt.config)
@@ -542,39 +344,13 @@ if __name__ == '__main__':
         raise ValueError(f"No MIDI files found in {opt.data}")
 
     random.shuffle(midi_list)
-    full_dataset_len = len(midi_list)
-
-
-    if opt.data_val_split == 0:
-        train_dataset_len = full_dataset_len
-    elif full_dataset_len <= opt.data_val_split:
-        print(f"⚠️ Dataset size ({full_dataset_len}) is smaller than validation split ({opt.data_val_split}).")
-        val_len = max(1, int(full_dataset_len * 0.1)) # Use 10% for val
-        if val_len >= full_dataset_len:
-             val_len = 0 # If only 1 file, use it for training
-        train_dataset_len = full_dataset_len - val_len
-        print(f"ℹ️ Auto-adjusting: {train_dataset_len} training files, {val_len} validation files.")
-    else:
-        remaining_train = full_dataset_len - opt.data_val_split
-        if remaining_train < (full_dataset_len * 0.5):
-            val_len = int(full_dataset_len * 0.1)
-            train_dataset_len = full_dataset_len - val_len
-            print(f"⚠️ Validation split ({opt.data_val_split}) is too large for dataset size ({full_dataset_len}).")
-            print(f"ℹ️ Auto-adjusting to 10% validation: {train_dataset_len} training files, {val_len} validation files.")
-        else:
-            train_dataset_len = full_dataset_len - opt.data_val_split
-
-    train_midi_list = midi_list[:train_dataset_len]
-    val_midi_list = midi_list[train_dataset_len:]
-
-
-    if len(train_midi_list) == 0:
-         raise ValueError("Training dataset is empty after split. Please provide more data.")
+    
+    print(f"ℹ️ All {len(midi_list)} files will be used for training (Validation disabled).")
+    train_midi_list = midi_list
 
     train_dataset = MidiDataset(train_midi_list, tokenizer, max_len=opt.max_len, aug=not opt.no_aug, check_quality=opt.quality,
-                                rand_start=True)
-    val_dataset = MidiDataset(val_midi_list, tokenizer, max_len=opt.max_len, aug=False, check_quality=opt.quality,
-                              rand_start=False)
+                                    rand_start=True)
+    
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=opt.batch_size_train,
@@ -584,30 +360,6 @@ if __name__ == '__main__':
         pin_memory=True,
         collate_fn=train_dataset.collate_fn
     )
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=opt.batch_size_val,
-        shuffle=False,
-        persistent_workers=True,
-        num_workers=opt.workers_val,
-        pin_memory=True,
-        collate_fn=val_dataset.collate_fn
-    )
-    print(f"train: {len(train_dataset)}  val: {len(val_dataset)}")
-
-
-    monitor_metric = "val/loss"
-    num_sanity_val_steps = 2
-    limit_val_batches = 1.0
-    val_loader_arg = val_dataloader
-
-    if len(val_dataset) == 0:
-        print("‼️ Validation set is empty. Switching checkpoint monitor to 'train/loss' and disabling validation.")
-        monitor_metric = "train/loss"
-        num_sanity_val_steps = 0
-        limit_val_batches = 0.0
-        val_loader_arg = None
-
 
     devices_count = opt.devices
     if devices_count == -1:
@@ -617,11 +369,8 @@ if __name__ == '__main__':
             devices_count = torch.cuda.device_count() if torch.cuda.is_available() else 1
         else:
             devices_count = 1
-
-    # Avoid division by zero
     devices_count = max(1, devices_count)
 
-    # Effective batch size = batch_per_gpu * gpus * nodes * gradient_accumulation
     effective_batch_size = opt.batch_size_train * devices_count * opt.nodes * opt.acc_grad
     steps_per_epoch = len(train_dataset) / effective_batch_size
 
@@ -645,7 +394,6 @@ if __name__ == '__main__':
         if opt.ckpt.endswith(".safetensors"):
             state_dict = safe_load_file(opt.ckpt)
         else:
-
             ckpt = torch.load(opt.ckpt, map_location="cpu", weights_only=False)
             state_dict = ckpt.get("state_dict", ckpt)
         model.load_state_dict(state_dict, strict=False)
@@ -662,31 +410,13 @@ if __name__ == '__main__':
             lora_dropout=0
         )
         model.add_adapter(lora_config)
-    print("---start train---")
     
-
-    # checkpoint_callback = ModelCheckpoint(
-    #     monitor=monitor_metric,
-    #     mode="min",
-    #     save_top_k=1,
-    #     save_last=True,
-    #     auto_insert_metric_name=False,
-    #     filename="epoch={epoch},loss={" + monitor_metric + ":.4f}",
-    # )
-    # callbacks = [checkpoint_callback]
+    print("---start train---")
     
     callbacks = []
     
-    save_best_peft_callback = SaveBestPeftCallback(monitor=monitor_metric, mode="min")
-    callbacks.append(save_best_peft_callback)
-    
 
-    callbacks.append(SaveLatestPeftCallback())
-
-    val_check_interval = opt.val_step or None
-    if val_check_interval is not None:
-        val_check_interval = min(val_check_interval, len(train_dataloader))
-
+    callbacks.append(SaveIntervalPeftCallback(interval=opt.save_interval))
 
     logger = TensorBoardLogger("lightning_logs", name=opt.name)
 
@@ -700,17 +430,16 @@ if __name__ == '__main__':
         num_nodes=opt.nodes,
         max_steps=opt.max_step,
         benchmark=not opt.disable_benchmark,
-        val_check_interval=val_check_interval,
         log_every_n_steps=1,
         strategy="auto",
         callbacks=callbacks,
         logger=logger,
-        num_sanity_val_steps=num_sanity_val_steps,
-        limit_val_batches=limit_val_batches,
+
+        num_sanity_val_steps=0,
+        limit_val_batches=0.0
     )
     ckpt_path = opt.resume
     if ckpt_path == "":
         ckpt_path = None
-    print("---start train---")
-
-    trainer.fit(model, train_dataloader, val_loader_arg, ckpt_path=ckpt_path)
+    
+    trainer.fit(model, train_dataloader, ckpt_path=ckpt_path)
