@@ -32,7 +32,8 @@ def get_lora_display_name(lora_path):
         return parts[-2]
 
     # If the last part is a generic name, climb up the directory tree
-    if parts[-1] in ["lora", "best_lora", "checkpoints"] and len(parts) > 1:
+
+    if (parts[-1] in ["lora", "best_lora", "checkpoints"] or parts[-1].startswith("checkpoint-")) and len(parts) > 1:
         if parts[-2].startswith("version_") and len(parts) > 2:
             return parts[-3]
         else:
@@ -67,7 +68,7 @@ def resolve_lora_path(args):
 
     # This now runs for both "random" and specific inputs like "super-mario-rpg"
     selected_name = os.path.basename(selected_lora.rstrip(os.sep))
-    if selected_name in ["lora", "best_lora", "checkpoints"]:
+    if selected_name in ["lora", "best_lora", "checkpoints"] or selected_name.startswith("checkpoint-"):
         parts = selected_lora.rstrip(os.sep).split(os.sep)
         if len(parts) > 1:
             selected_name = parts[-2]
@@ -88,6 +89,9 @@ def resolve_lora_path(args):
     search_roots = []
     if version and version != "random":
         search_roots.append(os.path.join("lightning_logs", selected_name, version))
+
+        if version.isdigit():
+             search_roots.append(os.path.join("lightning_logs", selected_name, f"version_{version}"))
     
     search_roots.extend([
         os.path.join("models", "loras", selected_name),
@@ -97,18 +101,18 @@ def resolve_lora_path(args):
 
 
     for root in search_roots:
-        if args.best_lora:
-            potential_paths.append(os.path.join(root, "best_lora"))
+
+        if args.step:
+             potential_paths.append(os.path.join(root, f"checkpoint-{args.step}"))
+
+        # Fallback/Default paths
         potential_paths.append(os.path.join(root, "lora"))
         potential_paths.append(root)
     
+    # Also check the direct path provided in args.lora (in case it was a direct path to a checkpoint)
+    if args.step:
+         potential_paths.append(os.path.join(selected_lora, f"checkpoint-{args.step}"))
 
-    if args.best_lora:
-        if selected_lora.rstrip(os.sep).endswith("lora"):
-            parent = os.path.dirname(selected_lora.rstrip(os.sep))
-            potential_paths.append(os.path.join(parent, "best_lora"))
-        potential_paths.append(os.path.join(selected_lora, "best_lora"))
-    
     potential_paths.append(selected_lora)
     
     for p in potential_paths:
@@ -125,7 +129,10 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="Path to model file")
     parser.add_argument("--config", type=str, default="auto", help="Model config")
     parser.add_argument("--lora", type=str, default=None, help="LoRA path or 'random'")
-    parser.add_argument("--best_lora", action="store_true", help="Use best_lora if available")
+
+    # parser.add_argument("--best_lora", action="store_true", help="Use best_lora if available") 
+
+    parser.add_argument("--step", type=str, default=None, help="Specific LoRA step (e.g., 50, 100)")
     parser.add_argument("--lora_strength", type=float, default=1.0, help="Strength of LoRA")
     parser.add_argument("--version", type=str, default=None, help="Version or 'random'")
     parser.add_argument("--loop", type=float, nargs='?', const=0, default=None, help="Keep base model in memory and loop. Optionally provide sleep seconds.")
@@ -189,17 +196,22 @@ def main():
             print(f"Merging LoRA: {current_lora_path}")
 
 
+
             meta_path = None
             if os.path.isdir(current_lora_path):
-                meta_path = os.path.join(current_lora_path, "metadata.json")
-            elif current_lora_path.endswith(".safetensors"):
-                meta_path = os.path.join(os.path.dirname(current_lora_path), "metadata.json")
+                # Check current dir (old style)
+                if os.path.exists(os.path.join(current_lora_path, "metadata.json")):
+                    meta_path = os.path.join(current_lora_path, "metadata.json")
+                # Check parent dir (new style, where current_lora_path might be 'checkpoint-50')
+                elif os.path.exists(os.path.join(os.path.dirname(current_lora_path), "best_loss_info.json")):
+                    meta_path = os.path.join(os.path.dirname(current_lora_path), "best_loss_info.json")
             
             if meta_path and os.path.exists(meta_path):
                 try:
                     with open(meta_path, 'r') as f:
                         meta = json.load(f)
-                        print(f"   ℹ️ Best LoRA found at Epoch {meta.get('epoch', '?')}, Step {meta.get('step', '?')} (Loss: {meta.get('value', '?')})")
+
+                        print(f"   ℹ️ Best Loss for this run was at Epoch {meta.get('epoch', '?')}, Step {meta.get('step', '?')} (Loss: {meta.get('value', '?')})")
                 except Exception as e:
                     pass
 
@@ -275,6 +287,9 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         lora_display_name = get_lora_display_name(current_lora_path)
+
+        if args.step:
+            lora_display_name += f"_step{args.step}"
         
         for i in range(args.batch_size):
             tokens = output_tokens[i]
