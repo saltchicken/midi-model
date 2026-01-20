@@ -16,12 +16,13 @@ except ImportError:
         print("Error: Python 3.13+ requires 'audioop-lts'. Run: pip install audioop-lts")
         sys.exit(1)
 
-# Import the SF2 parser after the audioop fix
+# ‼️ Made SF2 parser import conditional to allow stock mode without dependencies
+sf2_parser_available = False
 try:
     from sf2utils.sf2parse import Sf2File
+    sf2_parser_available = True
 except ImportError:
-    print("Error: Please run 'pip install sf2utils'")
-    sys.exit(1)
+    pass 
 
 # CONFIGURATION
 SOUNDFONT_DIR = "/usr/share/soundfonts"
@@ -141,6 +142,8 @@ def main():
     parser.add_argument("-b", "--bpm", type=int, help="Target BPM (percentage based on 120 default)")
 
     parser.add_argument("-r", "--random", action="store_true", help="Play a random MIDI file from output/ instead of the latest")
+    # ‼️ Added --stock argument
+    parser.add_argument("-s", "--stock", action="store_true", help="Use stock Timidity configuration (no shuffling)")
     args = parser.parse_args()
 
 
@@ -166,12 +169,22 @@ def main():
         print(f"Error: MIDI file not found: {midi_file}")
         sys.exit(1)
 
-    # 1. Select and Map
-    sf2_file = get_random_sf2(SOUNDFONT_DIR)
-    generate_chaos_config(sf2_file, TEMP_CFG)
+    # ‼️ Logic branch: Stock vs Chaos
+    if args.stock:
+        print("‼️ Using Stock Timidity Configuration")
+        cmd = ["timidity", "-id", midi_file]
+    else:
+        # Check dependency here if we are actually using it
+        if not sf2_parser_available:
+            print("Error: Please run 'pip install sf2utils' to use random soundfonts, or use --stock.")
+            sys.exit(1)
 
-    # 2. Build Command
-    cmd = ["timidity", "-id", "-c", TEMP_CFG, midi_file]
+        # 1. Select and Map
+        sf2_file = get_random_sf2(SOUNDFONT_DIR)
+        generate_chaos_config(sf2_file, TEMP_CFG)
+
+        # 2. Build Command
+        cmd = ["timidity", "-id", "-c", TEMP_CFG, midi_file]
     
     if args.bpm:
 

@@ -32,7 +32,6 @@ def get_lora_display_name(lora_path):
         return parts[-2]
 
     # If the last part is a generic name, climb up the directory tree
-
     if (parts[-1] in ["lora", "best_lora", "checkpoints"] or parts[-1].startswith("checkpoint-")) and len(parts) > 1:
         if parts[-2].startswith("version_") and len(parts) > 2:
             return parts[-3]
@@ -47,7 +46,6 @@ def resolve_lora_path(args):
         return None
 
     selected_lora = args.lora
-
 
     if args.lora.lower() == "random":
         all_loras = []
@@ -65,7 +63,6 @@ def resolve_lora_path(args):
         
         selected_lora = random.choice(all_loras)
     
-
     # This now runs for both "random" and specific inputs like "super-mario-rpg"
     selected_name = os.path.basename(selected_lora.rstrip(os.sep))
     if selected_name in ["lora", "best_lora", "checkpoints"] or selected_name.startswith("checkpoint-"):
@@ -75,7 +72,6 @@ def resolve_lora_path(args):
 
     version = args.version
     
-
     if version and version.lower() == "random":
         log_base = os.path.join("lightning_logs", selected_name)
         if os.path.exists(log_base):
@@ -85,7 +81,6 @@ def resolve_lora_path(args):
     
     potential_paths = []
     
-
     search_roots = []
     if version and version != "random":
         search_roots.append(os.path.join("lightning_logs", selected_name, version))
@@ -99,14 +94,12 @@ def resolve_lora_path(args):
         os.path.join("lightning_logs", selected_name),
     ])
 
-
     if args.step and args.step.lower() == "random":
         candidates = []
         for root in search_roots:
             if os.path.exists(root) and os.path.isdir(root):
                 try:
                     # Find directories like 'checkpoint-100', 'checkpoint-500'
-
                     items = [d for d in os.listdir(root) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(root, d))]
                     for item in items:
                         parts = item.split("-")
@@ -128,7 +121,6 @@ def resolve_lora_path(args):
 
 
     for root in search_roots:
-
         if args.step:
              potential_paths.append(os.path.join(root, f"checkpoint-{args.step}"))
 
@@ -233,8 +225,6 @@ def main():
         if current_lora_path:
             print(f"Merging LoRA: {current_lora_path}")
 
-
-
             meta_path = None
             if os.path.isdir(current_lora_path):
                 # Check current dir (old style)
@@ -265,15 +255,32 @@ def main():
         disable_channels = []
         full_mid_tokens = []
 
-        if args.input:
-            with open(args.input, 'rb') as f:
+        # ‼️ Resolving Input File (File vs Folder)
+        current_input = args.input
+        if current_input and os.path.isdir(current_input):
+            midi_candidates = []
+            print(f"‼️ Scanning '{current_input}' for MIDI files...")
+            for root, dirs, files in os.walk(current_input):
+                for file in files:
+                    if file.lower().endswith((".mid", ".midi")):
+                        midi_candidates.append(os.path.join(root, file))
+            
+            if midi_candidates:
+                current_input = random.choice(midi_candidates)
+                print(f"‼️ 🎲 Selected Random Input: {current_input}")
+            else:
+                print(f"‼️ ⚠️ No MIDI files found in {current_input}")
+                current_input = None
+
+        if current_input:
+            with open(current_input, 'rb') as f:
                 mid_tokens = tokenizer.tokenize(MIDI.midi2score(f.read()), cc_eps=4, tempo_eps=4, remap_track_channel=True, add_default_instr=True)
 
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
             
             # ‼️ STYLE TRANSFER LOGIC
             if args.match_input_style:
-                print(f"‼️ Style Match Mode: Extracting header from {args.input}...")
+                print(f"‼️ Style Match Mode: Extracting header from {current_input}...")
                 header_tokens = []
                 
                 # Parameters for "i2i" seed
