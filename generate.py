@@ -141,6 +141,8 @@ def main():
     parser.add_argument("--input", type=str, default=None)
     # ‼️ Added input_bars argument to specify how many bars of the input to keep
     parser.add_argument("--input_bars", type=float, default=None, help="Amount of bars to take from the beginning of the input")
+    # ‼️ Added input_start_bar argument to specify where to start taking bars from
+    parser.add_argument("--input_start_bar", type=float, default=0.0, help="Start point in bars for the input slice")
 
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--instruments", type=str, nargs="+")
@@ -236,41 +238,61 @@ def main():
 
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
             
-            # ‼️ Logic to truncate input to a specific number of bars
-            if args.input_bars is not None:
+            # ‼️ Logic to slice input (start bar and duration)
+            if args.input_bars is not None or args.input_start_bar > 0:
                 # Assuming 4/4 time signature (4 beats per bar)
-                target_beats = args.input_bars * 4
+                start_beats = args.input_start_bar * 4
+                
+                # If input_bars is provided, calculate end beats. Otherwise infinite.
+                duration_beats = (args.input_bars * 4) if args.input_bars is not None else float('inf')
+                end_beats = start_beats + duration_beats
+                
                 accumulated_beats = 0
-                cut_idx = len(mid_tokens)
+                
+                start_idx = None
+                end_idx = len(mid_tokens)
                 
                 # Get ID for time1=0
                 time1_base = tokenizer.parameter_ids["time1"][0]
 
                 for i, event_tokens in enumerate(mid_tokens):
-                    # Skip BOS token
+                    # Always skip BOS for timing calc
                     if event_tokens[0] == tokenizer.bos_id:
                         continue
                     
-                    # Safety check for token length
                     if len(event_tokens) < 2:
                         continue
 
                     t1_id = event_tokens[1]
-                    
                     # Check if it's a valid time1 parameter ID
-                    # If it's something else (like pad_id), skip it
                     if t1_id < time1_base:
                         continue
                         
                     t1_val = t1_id - time1_base
                     accumulated_beats += t1_val
 
-                    if accumulated_beats >= target_beats:
-                        cut_idx = i
-                        print(f"‼️ Truncating input at {args.input_bars} bars (stopped at event {i}, beat ~{accumulated_beats})")
+                    # Check if we passed the start threshold
+                    if start_idx is None and accumulated_beats >= start_beats:
+                        start_idx = i
+                    
+                    # Check if we passed the end threshold
+                    if accumulated_beats >= end_beats:
+                        end_idx = i
+                        print(f"‼️ Truncating input: Bars {args.input_start_bar} to {args.input_start_bar + (args.input_bars if args.input_bars else '?')}")
                         break
                 
-                mid_tokens = mid_tokens[:cut_idx]
+                # Handle cases where start wasn't found (e.g. start at 0)
+                if start_idx is None:
+                    if args.input_start_bar == 0:
+                        start_idx = 1 # Start after BOS
+                    else:
+                         print("⚠️ Warning: Start bar exceeds file length.")
+                         start_idx = len(mid_tokens)
+
+                # Construct new token list: BOS + Slice
+                bos_token = mid_tokens[0]
+                sliced_content = mid_tokens[start_idx:end_idx]
+                mid_tokens = [bos_token] + sliced_content
 
             full_mid_tokens = list(mid_tokens)
             mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
