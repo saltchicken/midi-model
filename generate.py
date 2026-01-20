@@ -100,6 +100,33 @@ def resolve_lora_path(args):
     ])
 
 
+    if args.step and args.step.lower() == "random":
+        candidates = []
+        for root in search_roots:
+            if os.path.exists(root) and os.path.isdir(root):
+                try:
+                    # Find directories like 'checkpoint-100', 'checkpoint-500'
+
+                    items = [d for d in os.listdir(root) if d.startswith("checkpoint-") and os.path.isdir(os.path.join(root, d))]
+                    for item in items:
+                        parts = item.split("-")
+                        # Ensure the part after checkpoint- is a number
+                        if len(parts) > 1 and parts[1].isdigit():
+                            candidates.append((root, parts[1]))
+                except OSError:
+                    pass
+        
+        if candidates:
+            # Pick a random checkpoint
+            root, step_val = random.choice(candidates)
+            print(f"🎲 Selected Random Step: {step_val}")
+            args.step = step_val
+            return os.path.join(root, f"checkpoint-{step_val}")
+        else:
+            print("⚠️ 'random' step requested but no checkpoints found. Using base LoRA.")
+            args.step = None
+
+
     for root in search_roots:
 
         if args.step:
@@ -190,6 +217,8 @@ def main():
         model.load_state_dict(base_state_dict, strict=False)
 
 
+        original_step_arg = args.step
+
         current_lora_path = resolve_lora_path(args)
         
         if args.lora and args.lora.lower() == "random":
@@ -210,7 +239,7 @@ def main():
                 # Check parent dir (new style, where current_lora_path might be 'checkpoint-50')
                 elif os.path.exists(os.path.join(os.path.dirname(current_lora_path), "best_loss_info.json")):
                     meta_path = os.path.join(os.path.dirname(current_lora_path), "best_loss_info.json")
-            
+                
             if meta_path and os.path.exists(meta_path):
                 try:
                     with open(meta_path, 'r') as f:
@@ -372,6 +401,9 @@ def main():
             with open(fname, 'wb') as f:
                 f.write(MIDI.score2midi(mid_score))
             print(f"✅ Saved: {fname}")
+
+
+        args.step = original_step_arg
 
         if args.loop is None:
             break
