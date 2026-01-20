@@ -139,9 +139,9 @@ def main():
 
     # Input Args
     parser.add_argument("--input", type=str, default=None)
-    # ‼️ Added input_bars argument to specify how many bars of the input to keep
+
     parser.add_argument("--input_bars", type=float, default=None, help="Amount of bars to take from the beginning of the input")
-    # ‼️ Added input_start_bar argument to specify where to start taking bars from
+
     parser.add_argument("--input_start_bar", type=float, default=0.0, help="Start point in bars for the input slice")
 
     parser.add_argument("--batch_size", type=int, default=1)
@@ -238,7 +238,7 @@ def main():
 
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
             
-            # ‼️ Logic to slice input (start bar and duration)
+
             if args.input_bars is not None or args.input_start_bar > 0:
                 # Assuming 4/4 time signature (4 beats per bar)
                 start_beats = args.input_start_bar * 4
@@ -342,7 +342,8 @@ def main():
         output_tokens = model.generate(
             prompt=mid_np, batch_size=args.batch_size, max_len=mid_np.shape[1] + args.num_events,
             temp=args.temp, top_p=args.top_p, top_k=args.top_k, generator=generator,
-            disable_patch_change=disable_patch_change, disable_channels=disable_channels
+            disable_patch_change=disable_patch_change, disable_channels=disable_channels,
+            stop_bars=args.num_bars
         )
 
         os.makedirs("output", exist_ok=True)
