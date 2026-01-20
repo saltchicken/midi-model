@@ -303,6 +303,9 @@ if __name__ == '__main__':
     parser.add_argument("--log-step", type=int, default=1, help="log training loss every n steps")
     parser.add_argument("--lora-rank", type=int, default=64, help="lora rank")
     parser.add_argument("--lora-alpha", type=int, default=None, help="lora alpha")
+    
+
+    parser.add_argument("--use-dora", action="store_true", default=False, help="Use DoRA (Weight-Decomposed LoRA)")
 
     parser.add_argument("--name", type=str, default=None, help="experiment name (output directory name)")
 
@@ -349,7 +352,7 @@ if __name__ == '__main__':
     train_midi_list = midi_list
 
     train_dataset = MidiDataset(train_midi_list, tokenizer, max_len=opt.max_len, aug=not opt.no_aug, check_quality=opt.quality,
-                                    rand_start=True)
+                                        rand_start=True)
     
     train_dataloader = DataLoader(
         train_dataset,
@@ -407,7 +410,9 @@ if __name__ == '__main__':
             task_type=TaskType.CAUSAL_LM,
             bias="none",
             lora_alpha=opt.lora_alpha,
-            lora_dropout=0
+            lora_dropout=0,
+
+            use_dora=opt.use_dora
         )
         model.add_adapter(lora_config)
     

@@ -111,11 +111,21 @@ class MIDIModel(PreTrainedModel):
         model = LoraModel(self, peft_config, adapter_name="default")
         adapter_state_dict = load_peft_weights(model_id, device=str(self.device))
 
+
+        use_dora = getattr(peft_config, "use_dora", False)
+
+        if use_dora:
+            print(f"ℹ️ DoRA adapter detected.")
+
         if lora_scale != 1.0:
-            for key in adapter_state_dict.keys():
-                # Scaling lora_B is sufficient to scale the whole adaptation
-                if "lora_B" in key:
-                    adapter_state_dict[key] *= lora_scale
+
+            if use_dora:
+                print(f"‼️ Warning: DoRA detected. Ignoring lora_strength={lora_scale} to preserve weight magnitude/direction decomposition.")
+            else:
+                for key in adapter_state_dict.keys():
+                    # Scaling lora_B is sufficient to scale the whole adaptation
+                    if "lora_B" in key:
+                        adapter_state_dict[key] *= lora_scale
 
         set_peft_model_state_dict(self, adapter_state_dict, "default")
         return model.merge_and_unload()
