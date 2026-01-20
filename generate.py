@@ -167,6 +167,10 @@ def main():
     # Input Args
     parser.add_argument("--input", type=str, default=None)
 
+    # ‼️ STYLE TRANSFER ARGS
+    parser.add_argument("--match_input_style", action="store_true", help="Use input MIDI instrumentation/key/tempo as prompt (Style Transfer).")
+    parser.add_argument("--include_input_bars", type=float, default=None, help="If matching style, how many bars of the original notes to keep as a seed.")
+
     parser.add_argument("--input_bars", type=float, default=None, help="Amount of bars to take from the beginning of the input")
 
     parser.add_argument("--input_start_bar", type=float, default=0.0, help="Start point in bars for the input slice")
@@ -267,8 +271,47 @@ def main():
 
             if mid_tokens and mid_tokens[-1][0] == tokenizer.eos_id: mid_tokens = mid_tokens[:-1]
             
-
-            if args.input_bars is not None or args.input_start_bar > 0:
+            # ‼️ STYLE TRANSFER LOGIC
+            if args.match_input_style:
+                print(f"‼️ Style Match Mode: Extracting header from {args.input}...")
+                header_tokens = []
+                
+                # Parameters for "i2i" seed
+                accumulated_beats = 0
+                include_beats = (args.include_input_bars * 4) if args.include_input_bars else 0
+                time1_base = tokenizer.parameter_ids["time1"][0]
+                
+                for t in mid_tokens:
+                    event_id = t[0]
+                    event_name = tokenizer.id_events.get(event_id, "")
+                    
+                    # Always keep BOS
+                    if t[0] == tokenizer.bos_id:
+                        header_tokens.append(t)
+                        continue
+                    
+                    # Track Time
+                    if len(t) > 1 and t[1] >= time1_base:
+                        t1_val = t[1] - time1_base
+                        accumulated_beats += max(0, t1_val) # Approximate
+                        
+                    # Stop Condition: First Note (unless including bars)
+                    if event_name == "note":
+                        if not args.include_input_bars:
+                            break
+                        if accumulated_beats >= include_beats:
+                            print(f"‼️ Included {args.include_input_bars} bars of notes as prompt seed.")
+                            break
+                    
+                    header_tokens.append(t)
+                
+                # Override prompt with Style Header
+                mid_tokens = header_tokens
+                full_mid_tokens = list(mid_tokens)
+                mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
+                
+            # ‼️ STANDARD CONTINUATION LOGIC (Only runs if match_input_style is OFF)
+            elif args.input_bars is not None or args.input_start_bar > 0:
                 # Assuming 4/4 time signature (4 beats per bar)
                 start_beats = args.input_start_bar * 4
                 
@@ -323,8 +366,13 @@ def main():
                 sliced_content = mid_tokens[start_idx:end_idx]
                 mid_tokens = [bos_token] + sliced_content
 
-            full_mid_tokens = list(mid_tokens)
-            mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
+                full_mid_tokens = list(mid_tokens)
+                mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
+            else:
+                # Default case: Use entire input as prompt
+                full_mid_tokens = list(mid_tokens)
+                mid_np = np.asarray([mid_tokens] * args.batch_size, dtype=np.int64)
+
         else:
             mid_prompt = [[tokenizer.bos_id] + [tokenizer.pad_id] * (tokenizer.max_token_seq - 1)]
             
