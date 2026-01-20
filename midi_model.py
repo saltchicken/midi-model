@@ -127,7 +127,10 @@ class MIDIModel(PreTrainedModel):
                     if "lora_B" in key:
                         adapter_state_dict[key] *= lora_scale
 
-        set_peft_model_state_dict(self, adapter_state_dict, "default")
+
+        # This is critical for DoRA because 'model' handles the 'base_model.model...' prefix mapping 
+        # and ensures magnitude vectors are loaded correctly into the PEFT structure.
+        set_peft_model_state_dict(model, adapter_state_dict, "default")
         return model.merge_and_unload()
 
     def forward_token(self, hidden_state=None, x=None, cache=None):
@@ -294,7 +297,7 @@ class MIDIModel(PreTrainedModel):
 
                 if next_token_seq.shape[1] < max_token_seq:
                     next_token_seq = F.pad(next_token_seq, (0, max_token_seq - next_token_seq.shape[1]),
-                                             "constant", value=tokenizer.pad_id)
+                                                 "constant", value=tokenizer.pad_id)
                 next_token_seq = next_token_seq.unsqueeze(1)
                 input_tensor = torch.cat([input_tensor, next_token_seq], dim=1)
                 past_len = cur_len
